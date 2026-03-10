@@ -168,9 +168,11 @@ const App: React.FC = () => {
       const fileNames = files.map(f => f.name);
       const savedId = await saveAnalysis(analysis, analysisModes, fileNames);
       setSavedToDb(savedId !== null);
-    } catch (err) {
-      console.error(err);
-      setError("Falha na análise dos documentos pela IA. Tente novamente.");
+    } catch (err: any) {
+      console.error('Erro detalhado da IA:', err);
+      // Extrai a mensagem real do erro
+      const errorMsg = err?.message || String(err);
+      setError(`Falha na IA: ${errorMsg}`);
     } finally {
       setLoading(false);
     }

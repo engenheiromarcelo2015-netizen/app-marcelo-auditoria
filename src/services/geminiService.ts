@@ -8,7 +8,11 @@ export const analyzeDocuments = async (
   files: { name: string; text: string }[], 
   modes: AnalysisMode[]
 ): Promise<DocumentSummary> => {
-  const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("A chave da API do Gemini (VITE_GEMINI_API_KEY) não foi encontrada nas variáveis de ambiente do build.");
+  }
+  const ai = new GoogleGenAI({ apiKey });
   
   const focusDescriptions = modes.map(mode => {
     if (mode === 'IATF') {
@@ -34,45 +38,54 @@ export const analyzeDocuments = async (
     RESPONDA EM PORTUGUÊS (Brasil). Identifique erros, omissões e forneça recomendações práticas.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          overallScore: { type: Type.NUMBER, description: "Pontuação geral de 0 a 100" },
-          criticalIssues: { type: Type.NUMBER, description: "Número de falhas críticas" },
-          majorIssues: { type: Type.NUMBER, description: "Número de falhas maiores" },
-          minorIssues: { type: Type.NUMBER, description: "Número de falhas menores" },
-          complianceProgress: {
-            type: Type.OBJECT,
-            properties: {
-              iatf: { type: Type.NUMBER, description: "Progresso IATF 0-100" },
-              iso14001: { type: Type.NUMBER, description: "Progresso ISO 14001 0-100" }
-            },
-            required: ["iatf", "iso14001"]
-          },
-          findings: {
-            type: Type.ARRAY,
-            items: {
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.NUMBER, description: "Pontuação geral de 0 a 100" },
+            criticalIssues: { type: Type.NUMBER, description: "Número de falhas críticas" },
+            majorIssues: { type: Type.NUMBER, description: "Número de falhas maiores" },
+            minorIssues: { type: Type.NUMBER, description: "Número de falhas menores" },
+            complianceProgress: {
               type: Type.OBJECT,
               properties: {
-                standard: { type: Type.STRING, description: "Norma correspondente" },
-                clause: { type: Type.STRING, description: "Número da cláusula correspondente" },
-                finding: { type: Type.STRING, description: "Descrição detalhada do erro ou falha encontrada" },
-                severity: { type: Type.STRING, description: "CRITICAL, MAJOR, MINOR ou OBSERVATION" },
-                recommendation: { type: Type.STRING, description: "Ação corretiva ou recomendação para Marcelo" }
+                iatf: { type: Type.NUMBER, description: "Progresso IATF 0-100" },
+                iso14001: { type: Type.NUMBER, description: "Progresso ISO 14001 0-100" }
               },
-              required: ["standard", "clause", "finding", "severity", "recommendation"]
+              required: ["iatf", "iso14001"]
+            },
+            findings: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  standard: { type: Type.STRING, description: "Norma correspondente" },
+                  clause: { type: Type.STRING, description: "Número da cláusula correspondente" },
+                  finding: { type: Type.STRING, description: "Descrição detalhada do erro ou falha encontrada" },
+                  severity: { type: Type.STRING, description: "CRITICAL, MAJOR, MINOR ou OBSERVATION" },
+                  recommendation: { type: Type.STRING, description: "Ação corretiva ou recomendação para Marcelo" }
+                },
+                required: ["standard", "clause", "finding", "severity", "recommendation"]
+              }
             }
-          }
-        },
-        required: ["overallScore", "criticalIssues", "majorIssues", "minorIssues", "findings", "complianceProgress"]
+          },
+          required: ["overallScore", "criticalIssues", "majorIssues", "minorIssues", "findings", "complianceProgress"]
+        }
       }
+    });
+  } catch (apiError: any) {
+    console.error("Erro na API Gemini:", apiError);
+    if (apiError?.message?.includes('fetch failed') || apiError?.message?.includes('CORS')) {
+       throw new Error(`Erro de rede ou permissão da API no frontend: ${apiError?.message}`);
     }
-  });
+    throw new Error(`Erro ao conectar com API Gemini: ${apiError?.message || 'Erro desconhecido'}`);
+  }
 
   try {
     const text = response.text;
