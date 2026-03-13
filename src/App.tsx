@@ -5,7 +5,7 @@ import { FindingsTable } from './components/FindingsTable';
 import { DocumentSummary } from './types';
 import { analyzeDocuments, AnalysisMode } from './services/geminiService';
 import { saveAnalysis } from './services/analysisService';
-import { validateLogin } from './services/authService';
+import { validateLogin, registerSession, updateHeartbeat, clearSession } from './services/authService';
 import { 
   FileUp, 
   Trash2, 
@@ -17,7 +17,8 @@ import {
   Lightbulb,
   MonitorCheck,
   Lock,
-  LogIn
+  LogIn,
+  LogOut
 } from 'lucide-react';
 
 // Senhas gerenciadas no Supabase (tabela access_passwords)
@@ -37,15 +38,68 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [analysisModes, setAnalysisModes] = useState<AnalysisMode[]>(['IATF']);
   const [savedToDb, setSavedToDb] = useState<boolean | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(localStorage.getItem('session_token'));
+
+  // ── Session Heartbeat & Recovery ──
+  React.useEffect(() => {
+    const recoveredToken = localStorage.getItem('session_token');
+    const recoveredUserId = localStorage.getItem('user_id');
+
+    if (recoveredToken && recoveredUserId) {
+      // Tenta validar a sessão existente no banco
+      updateHeartbeat(recoveredToken).then(valid => {
+        if (valid) {
+          setIsAuthenticated(true);
+          setSessionToken(recoveredToken);
+        } else {
+          // Sessão inválida ou expirada no banco
+          handleLogout();
+        }
+      });
+    }
+
+    // Heartbeat interval (1 minuto)
+    const interval = setInterval(() => {
+      const currentToken = localStorage.getItem('session_token');
+      if (isAuthenticated && currentToken) {
+        updateHeartbeat(currentToken).then(valid => {
+          if (!valid) {
+            handleLogout();
+            setLoginError('Sua sessão expirou ou foi encerrada em outro dispositivo.');
+          }
+        });
+      }
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
+  const handleLogout = async () => {
+    const currentToken = sessionToken || localStorage.getItem('session_token');
+    if (currentToken) {
+      await clearSession(currentToken);
+    }
+    setIsAuthenticated(false);
+    setSessionToken(null);
+    setFiles([]);
+    setSummary(null);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginUsername.trim() || !loginPassword.trim()) return;
     setLoginLoading(true);
     setLoginError(null);
-    const valid = await validateLogin(loginUsername.trim(), loginPassword.trim());
-    if (valid) {
-      setIsAuthenticated(true);
+    const userData = await validateLogin(loginUsername.trim(), loginPassword.trim());
+    
+    if (userData) {
+      const token = await registerSession(userData.id, navigator.userAgent);
+      if (token) {
+        setSessionToken(token);
+        setIsAuthenticated(true);
+      } else {
+        setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
+      }
     } else {
       setLoginError('Senha inválida. Verifique e tente novamente.');
     }
@@ -328,6 +382,15 @@ const App: React.FC = () => {
 
   return (
     <Layout>
+      <div className="flex justify-end mb-4">
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-700 shadow-lg"
+        >
+          <LogOut className="w-3 h-3 text-red-500" />
+          Sair do Sistema
+        </button>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Coluna Esquerda: Gerenciamento de Arquivos */}
         <div className="lg:col-span-4 space-y-6">
