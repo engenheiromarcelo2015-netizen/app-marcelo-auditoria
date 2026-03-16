@@ -5,7 +5,21 @@ import { FindingsTable } from './components/FindingsTable';
 import { DocumentSummary } from './types';
 import { analyzeDocuments, AnalysisMode } from './services/geminiService';
 import { saveAnalysis } from './services/analysisService';
-import { validateLogin, registerSession, updateHeartbeat, clearSession } from './services/authService';
+import { 
+  validateLogin, 
+  registerSession, 
+  updateHeartbeat, 
+  clearSession, 
+  registerUser,
+  checkAccessStatus,
+  UserData
+} from './services/authService';
+import { 
+  generatePixPayment, 
+  simulatePaymentSuccess, 
+  getLatestPendingPayment,
+  PaymentData
+} from './services/paymentService';
 import { 
   FileUp, 
   Trash2, 
@@ -18,7 +32,12 @@ import {
   MonitorCheck,
   Lock,
   LogIn,
-  LogOut
+  LogOut,
+  UserPlus,
+  ArrowLeft,
+  QrCode,
+  CreditCard,
+  ExternalLink
 } from 'lucide-react';
 
 // Senhas gerenciadas no Supabase (tabela access_passwords)
@@ -26,10 +45,23 @@ import {
 const App: React.FC = () => {
   // ── Auth ──
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isPaid, setIsPaid] = useState(false);
+  const [authView, setAuthView] = useState<'login' | 'register' | 'payment'>('login');
+  const [currentUser, setCurrentUser] = useState<UserData | null>(null);
+  
+  // States para Forms
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [regUsername, setRegUsername] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
+  
+  // ── Payment ──
+  const [activePayment, setActivePayment] = useState<PaymentData | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   // ── App ──
   const [files, setFiles] = useState<{ name: string; text: string }[]>([]);
@@ -47,12 +79,14 @@ const App: React.FC = () => {
 
     if (recoveredToken && recoveredUserId) {
       // Tenta validar a sessão existente no banco
-      updateHeartbeat(recoveredToken).then(valid => {
+      updateHeartbeat(recoveredToken).then(async valid => {
         if (valid) {
+          const { isPaid: paid } = await checkAccessStatus(recoveredUserId);
+          setIsPaid(paid);
           setIsAuthenticated(true);
           setSessionToken(recoveredToken);
+          if (!paid) setAuthView('payment');
         } else {
-          // Sessão inválida ou expirada no banco
           handleLogout();
         }
       });
@@ -61,11 +95,16 @@ const App: React.FC = () => {
     // Heartbeat interval (1 minuto)
     const interval = setInterval(() => {
       const currentToken = localStorage.getItem('session_token');
-      if (isAuthenticated && currentToken) {
-        updateHeartbeat(currentToken).then(valid => {
+      const currentUserId = localStorage.getItem('user_id');
+      if (isAuthenticated && currentToken && currentUserId) {
+        updateHeartbeat(currentToken).then(async valid => {
           if (!valid) {
             handleLogout();
             setLoginError('Sua sessão expirou ou foi encerrada em outro dispositivo.');
+          } else {
+            // Verifica se o pagamento ainda é válido
+            const { isPaid: paid } = await checkAccessStatus(currentUserId);
+            setIsPaid(paid);
           }
         });
       }
@@ -80,7 +119,10 @@ const App: React.FC = () => {
       await clearSession(currentToken);
     }
     setIsAuthenticated(false);
+    setIsPaid(false);
     setSessionToken(null);
+    setCurrentUser(null);
+    setAuthView('login');
     setFiles([]);
     setSummary(null);
   };
@@ -96,7 +138,24 @@ const App: React.FC = () => {
       const token = await registerSession(userData.id, navigator.userAgent);
       if (token) {
         setSessionToken(token);
+        setCurrentUser(userData);
+        
+        // Verifica pagamento
+        const { isPaid: paid } = await checkAccessStatus(userData.id);
+        setIsPaid(paid);
         setIsAuthenticated(true);
+        
+        if (!paid) {
+          setAuthView('payment');
+          // Busca ou gera pagamento pendente
+          const existing = await getLatestPendingPayment(userData.id);
+          if (existing) {
+            setActivePayment(existing);
+          } else {
+            const newPayment = await generatePixPayment(userData.id);
+            setActivePayment(newPayment);
+          }
+        }
       } else {
         setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
       }
@@ -106,7 +165,41 @@ const App: React.FC = () => {
     setLoginLoading(false);
   };
 
-  if (!isAuthenticated) {
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regUsername.trim() || !regPassword.trim() || !regEmail.trim()) return;
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const userData = await registerUser(regUsername.trim(), regPassword.trim(), regEmail.trim());
+      if (userData) {
+        // Após registro, faz login automático
+        setLoginUsername(regUsername);
+        setLoginPassword(regPassword);
+        setAuthView('login');
+        setLoginError('Cadastro realizado! Clique em Entrar.');
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'Erro ao realizar cadastro.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleSimulatePayment = async () => {
+    if (!activePayment || !currentUser) return;
+    setPaymentLoading(true);
+    const success = await simulatePaymentSuccess(activePayment.id, currentUser.id);
+    if (success) {
+      setIsPaid(true);
+      setActivePayment(null);
+    } else {
+      setLoginError('Erro ao processar pagamento simulado.');
+    }
+    setPaymentLoading(false);
+  };
+
+  if (!isAuthenticated || !isPaid) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-sm">
@@ -119,51 +212,188 @@ const App: React.FC = () => {
             <p className="text-red-500 text-xs font-black uppercase tracking-[0.3em] mt-1">Soluções Empreendedoras</p>
           </div>
 
-          {/* Card de Login */}
-          <form onSubmit={handleLogin} className="bg-slate-800 rounded-2xl p-8 shadow-2xl border border-slate-700 space-y-5">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Login</label>
-              <input
-                type="text"
-                value={loginUsername}
-                onChange={e => setLoginUsername(e.target.value)}
-                placeholder="Digite seu login"
-                autoFocus
-                className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
-              />
-            </div>
+          {authView === 'login' && (
+            <>
+              <form onSubmit={handleLogin} className="bg-slate-800 rounded-2xl p-8 shadow-2xl border border-slate-700 space-y-5">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Login</label>
+                  <input
+                    type="text"
+                    value={loginUsername}
+                    onChange={e => setLoginUsername(e.target.value)}
+                    placeholder="Digite seu login"
+                    className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
+                  />
+                </div>
 
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Senha de Acesso</label>
-              <input
-                type="password"
-                value={loginPassword}
-                onChange={e => setLoginPassword(e.target.value)}
-                placeholder="Digite sua senha"
-                className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
-              />
-            </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Senha de Acesso</label>
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={e => setLoginPassword(e.target.value)}
+                    placeholder="Digite sua senha"
+                    className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
+                  />
+                </div>
 
-            {loginError && (
-              <div className="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-xl p-3">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                <p className="text-red-400 text-xs font-bold">{loginError}</p>
+                {loginError && (
+                  <div className={`flex items-center gap-2 border rounded-xl p-3 ${loginError.includes('Cadastro') ? 'bg-emerald-900/30 border-emerald-800' : 'bg-red-900/30 border-red-800'}`}>
+                    <AlertCircle className={`w-4 h-4 shrink-0 ${loginError.includes('Cadastro') ? 'text-emerald-400' : 'text-red-400'}`} />
+                    <p className={`text-xs font-bold ${loginError.includes('Cadastro') ? 'text-emerald-400' : 'text-red-400'}`}>{loginError}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loginLoading || !loginUsername.trim() || !loginPassword.trim()}
+                  className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-3 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                >
+                  {loginLoading ? (
+                    <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <LogIn className="w-4 h-4" />
+                  )}
+                  {loginLoading ? 'Verificando...' : 'Entrar'}
+                </button>
+              </form>
+              <button 
+                onClick={() => setAuthView('register')}
+                className="w-full mt-4 flex items-center justify-center gap-2 text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-widest transition-colors"
+              >
+                <UserPlus className="w-3 h-3" />
+                Criar Nova Conta
+              </button>
+            </>
+          )}
+
+          {authView === 'register' && (
+            <form onSubmit={handleRegister} className="bg-slate-800 rounded-2xl p-8 shadow-2xl border border-slate-700 space-y-5 animate-fade-in">
+              <button 
+                type="button"
+                onClick={() => setAuthView('login')}
+                className="flex items-center gap-1 text-slate-400 hover:text-white text-[10px] font-black uppercase mb-2"
+              >
+                <ArrowLeft className="w-3 h-3" /> Voltar
+              </button>
+              
+              <h2 className="text-white font-black uppercase tracking-widest text-sm mb-4">Cadastro de Usuário</h2>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">E-mail</label>
+                <input
+                  type="email"
+                  value={regEmail}
+                  onChange={e => setRegEmail(e.target.value)}
+                  placeholder="seu@email.com"
+                  className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
+                />
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={loginLoading || !loginUsername.trim() || !loginPassword.trim()}
-              className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-3 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
-            >
-              {loginLoading ? (
-                <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <LogIn className="w-4 h-4" />
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Login Escolhido</label>
+                <input
+                  type="text"
+                  value={regUsername}
+                  onChange={e => setRegUsername(e.target.value)}
+                  placeholder="Ex: marcelo123"
+                  className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Senha</label>
+                <input
+                  type="password"
+                  value={regPassword}
+                  onChange={e => setRegPassword(e.target.value)}
+                  placeholder="Crie uma senha"
+                  className="w-full bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 text-sm font-medium transition-all"
+                />
+              </div>
+
+              {loginError && (
+                <div className="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-xl p-3">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <p className="text-red-400 text-xs font-bold">{loginError}</p>
+                </div>
               )}
-              {loginLoading ? 'Verificando...' : 'Entrar'}
-            </button>
-          </form>
+
+              <button
+                type="submit"
+                disabled={loginLoading || !regUsername.trim() || !regPassword.trim() || !regEmail.trim()}
+                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black py-3 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+              >
+                {loginLoading ? (
+                  <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <UserPlus className="w-4 h-4" />
+                )}
+                {loginLoading ? 'Processando...' : 'Finalizar Cadastro'}
+              </button>
+            </form>
+          )}
+
+          {authView === 'payment' && (
+            <div className="bg-slate-800 rounded-2xl p-8 shadow-2xl border border-slate-700 space-y-6 animate-fade-in text-center">
+              <div className="space-y-2">
+                <h2 className="text-white font-black uppercase tracking-widest text-lg">Acesso Bloqueado</h2>
+                <p className="text-slate-400 text-xs font-medium">Sua conta está ativa, mas você precisa de um plano para liberar os recursos de auditoria.</p>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Plano Mensal</span>
+                  <span className="text-white font-black text-sm">R$ 29,90</span>
+                </div>
+                
+                <div className="bg-white p-4 rounded-xl inline-block mx-auto">
+                  {/* Simulação de QR Code */}
+                  <QrCode className="w-32 h-32 text-slate-900" />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">PIX Copia e Cola:</div>
+                  <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 text-[10px] text-slate-300 font-mono break-all line-clamp-2">
+                    {activePayment?.pix_qr_code || 'Gerando código...'}
+                  </div>
+                  <button 
+                    onClick={() => navigator.clipboard.writeText(activePayment?.pix_qr_code || '')}
+                    className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-widest py-2"
+                  >
+                    <ExternalLink className="w-3 h-3" /> Copiar Código PIX
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <button
+                  onClick={handleSimulatePayment}
+                  disabled={paymentLoading || !activePayment}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black py-4 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                >
+                  {paymentLoading ? (
+                    <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <CreditCard className="w-4 h-4" />
+                  )}
+                  {paymentLoading ? 'Confirmando...' : 'Confirmar Pagamento'}
+                </button>
+                
+                <button 
+                  onClick={handleLogout}
+                  className="w-full text-slate-500 hover:text-slate-300 text-[10px] font-black uppercase tracking-widest"
+                >
+                  Sair do Sistema
+                </button>
+              </div>
+
+              <div className="flex items-center justify-center gap-2 opacity-50">
+                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Liberação Imediata via PIX</span>
+              </div>
+            </div>
+          )}
 
           <p className="text-center text-slate-600 text-[10px] mt-6 uppercase tracking-widest">
             CNPJ: 23.067.526/0001-94
