@@ -127,12 +127,10 @@ const App: React.FC = () => {
     setSummary(null);
   };
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loginUsername.trim() || !loginPassword.trim()) return;
+  const performLogin = async (username: string, password: string) => {
     setLoginLoading(true);
     setLoginError(null);
-    const userData = await validateLogin(loginUsername.trim(), loginPassword.trim());
+    const userData = await validateLogin(username.trim(), password.trim());
     
     if (userData) {
       const token = await registerSession(userData.id, navigator.userAgent);
@@ -156,6 +154,7 @@ const App: React.FC = () => {
             setActivePayment(newPayment);
           }
         }
+        return true;
       } else {
         setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
       }
@@ -163,6 +162,13 @@ const App: React.FC = () => {
       setLoginError('Senha inválida. Verifique e tente novamente.');
     }
     setLoginLoading(false);
+    return false;
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginUsername.trim() || !loginPassword.trim()) return;
+    await performLogin(loginUsername, loginPassword);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -174,10 +180,7 @@ const App: React.FC = () => {
       const userData = await registerUser(regUsername.trim(), regPassword.trim(), regEmail.trim());
       if (userData) {
         // Após registro, faz login automático
-        setLoginUsername(regUsername);
-        setLoginPassword(regPassword);
-        setAuthView('login');
-        setLoginError('Cadastro realizado! Clique em Entrar.');
+        await performLogin(regUsername, regPassword);
       }
     } catch (err: any) {
       setLoginError(err.message || 'Erro ao realizar cadastro.');
@@ -502,51 +505,63 @@ const App: React.FC = () => {
 
       // Configuração do Cabeçalho Estilizado
       doc.setFillColor(15, 23, 42); // slate-900
-      doc.rect(0, 0, 210, 45, 'F');
+      doc.rect(0, 0, 210, 18, 'F');
       
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
-      doc.text('MARCELO DIAS', 105, 18, { align: 'center' });
+      doc.text('APP Marcelo - Auditoria', 105, 8, { align: 'center' });
       
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(239, 68, 68); // red-500
-      doc.text('SOLUÇÕES EMPREENDEDORAS', 105, 25, { align: 'center' });
+      doc.text('SOLUÇÕES EMPREENDEDORAS', 105, 13, { align: 'center' });
       
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(11);
-      doc.text(`RELATÓRIO TÉCNICO DE AUDITORIA: ${analysisModes.join(' + ').toUpperCase()}`, 105, 34, { align: 'center' });
       doc.setFontSize(8);
-      doc.text(`GERADO EM: ${dateStr} às ${timeStr}`, 105, 40, { align: 'center' });
+      doc.text(`GERADO EM: ${dateStr} às ${timeStr}`, 105, 16.5, { align: 'center' });
 
       // Seção de Panorama
       doc.setTextColor(15, 23, 42);
-      doc.setFontSize(14);
+      doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('PANORAMA DE CONFORMIDADE', 14, 60);
+      doc.text('PANORAMA DE CONFORMIDADE', 14, 25);
       
       // Linha decorativa
-      doc.setDrawColor(226, 232, 240);
-      doc.line(14, 63, 196, 63);
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(14, 26.5, 196, 26.5);
 
+      // Coluna Esquerda: Pontuações
+      doc.setFontSize(11);
+      doc.text(`Pontuação Geral: ${summary.overallScore}%`, 14, 32);
+      
       doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text(`Pontuação Geral Estimada: ${summary.overallScore}%`, 14, 72);
-      doc.text(`Status IATF 16949: ${summary.complianceProgress.iatf}%`, 14, 78);
-      doc.text(`Status ISO 14001: ${summary.complianceProgress.iso14001}%`, 14, 84);
+      doc.setFontSize(9);
+      doc.text(`IATF 16949: ${summary.complianceProgress.iatf}%`, 14, 37);
+      doc.text(`ISO 14001: ${summary.complianceProgress.iso14001}%`, 14, 41.5);
 
-      // Resumo de Desvios
+      // Coluna Direita: Desvios
       doc.setFont('helvetica', 'bold');
-      doc.text('RESUMO DE DESVIOS:', 120, 72);
+      doc.setFontSize(10);
+      doc.text('SÍNTESE DE DESVIOS:', 120, 32);
+      
       doc.setFont('helvetica', 'normal');
-      doc.text(`• Críticos: ${summary.criticalIssues}`, 120, 78);
-      doc.text(`• Maiores: ${summary.majorIssues}`, 120, 84);
-      doc.text(`• Menores: ${summary.minorIssues}`, 120, 90);
+      doc.setFontSize(9);
+      
+      // Simula badges/cores usando texto (Limitações do autoTable e fontes básicas jsPDF)
+      doc.setTextColor(220, 38, 38); // red-600 para críticos
+      doc.text(`• Críticos: ${summary.criticalIssues}`, 120, 37);
+      
+      doc.setTextColor(234, 88, 12); // orange-600 para maiores
+      doc.text(`• Maiores: ${summary.majorIssues}`, 120, 41.5);
+      
+      doc.setTextColor(202, 138, 4); // yellow-600 para menores
+      doc.text(`• Menores: ${summary.minorIssues}`, 120, 46);
 
       // Tabela de Achados
       (doc as any).autoTable({
-        startY: 100,
+        startY: 50,
         head: [['Gravidade', 'Norma / Cláusula', 'Descrição do Achado', 'Recomendação Técnica']],
         body: summary.findings.map(f => [
           f.severity,
@@ -561,18 +576,18 @@ const App: React.FC = () => {
         },
         styles: { 
           fontSize: 8, 
-          cellPadding: 5,
+          cellPadding: 2,
           overflow: 'linebreak',
           cellWidth: 'wrap'
         },
         columnStyles: {
-          0: { cellWidth: 25, halign: 'center', fontStyle: 'bold' },
-          1: { cellWidth: 35 },
-          2: { cellWidth: 65 },
-          3: { cellWidth: 65 },
+          0: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 32 },
+          2: { cellWidth: 62 },
+          3: { cellWidth: 62 },
         },
         alternateRowStyles: { fillColor: [248, 250, 252] },
-        margin: { top: 100 }
+        margin: { top: 20 }
       });
 
       // Isenção de Responsabilidade (Aviso Legal)
