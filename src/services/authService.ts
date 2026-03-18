@@ -4,17 +4,16 @@ export interface UserData {
   id: string;
   login: string;
   email?: string;
-  paid_until?: string;
+  credits: number;
 }
 
 /**
  * Valida o login e a senha consultando a tabela access_passwords no Supabase.
- * Retorna os dados do usuário se a combinação existir e estiver ativa.
  */
 export async function validateLogin(login: string, password: string): Promise<UserData | null> {
   const { data, error } = await supabase
     .from('access_passwords')
-    .select('id, login, email, paid_until')
+    .select('id, login, email, credits')
     .eq('login', login)
     .eq('password', password)
     .eq('active', true)
@@ -29,24 +28,24 @@ export async function validateLogin(login: string, password: string): Promise<Us
 }
 
 /**
- * Registra um novo usuário no sistema.
+ * Registra um novo usuário com 1 crédito grátis.
  */
 export async function registerUser(login: string, password: string, email: string): Promise<UserData | null> {
   const { data, error } = await supabase
     .from('access_passwords')
-    .insert([{ 
-      login, 
-      password, 
-      email, 
+    .insert([{
+      login,
+      password,
+      email,
       active: true,
-      paid_until: new Date().toISOString() // Começa com 0 créditos
+      credits: 1, // 1 crédito grátis na primeira análise
     }])
     .select()
     .single();
 
   if (error) {
     if (error.code === '23505') {
-      throw new Error('Este login ou senha já está em uso.');
+      throw new Error('Este login ou e-mail já está em uso.');
     }
     console.error('[Supabase] Erro ao registrar usuário:', error.message);
     return null;
@@ -56,14 +55,54 @@ export async function registerUser(login: string, password: string, email: strin
 }
 
 /**
- * Registra uma nova sessão para o usuário ou valida uma existente.
- * Se houver uma sessão ativa de outro dispositivo dentro do limite do heartbeat (5min), bloqueia.
+ * Verifica o saldo de créditos do usuário.
+ */
+export async function checkAccessStatus(userId: string): Promise<{ credits: number }> {
+  const { data, error } = await supabase
+    .from('access_passwords')
+    .select('credits')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) return { credits: 0 };
+  return { credits: data.credits ?? 0 };
+}
+
+/**
+ * Consome 1 crédito do usuário ao iniciar uma análise.
+ * Retorna true se bem-sucedido, false se sem créditos.
+ */
+export async function consumeCredit(userId: string): Promise<boolean> {
+  const { data: user, error: fetchError } = await supabase
+    .from('access_passwords')
+    .select('credits')
+    .eq('id', userId)
+    .single();
+
+  if (fetchError || !user || user.credits <= 0) {
+    return false;
+  }
+
+  const { error } = await supabase
+    .from('access_passwords')
+    .update({ credits: user.credits - 1 })
+    .eq('id', userId);
+
+  if (error) {
+    console.error('[Supabase] Erro ao consumir crédito:', error.message);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Registra uma nova sessão para o usuário.
  */
 export async function registerSession(userId: string, userAgent: string): Promise<string | null> {
   const sessionToken = crypto.randomUUID();
   const heartbeatLimit = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
-  // Busca sessão existente
   const { data: existingSession } = await supabase
     .from('user_sessions')
     .select('id, last_active, session_token')
@@ -71,21 +110,16 @@ export async function registerSession(userId: string, userAgent: string): Promis
     .maybeSingle();
 
   if (existingSession) {
-    // Se a sessão existente estiver ativa (heartbeat recente), bloqueia novo login
     if (new Date(existingSession.last_active) > new Date(heartbeatLimit)) {
-      // Se for o mesmo token (recuperação de estado), permite
       const savedToken = localStorage.getItem('session_token');
       if (savedToken === existingSession.session_token) {
         return savedToken;
       }
-      return null; // Usuário já está logado em outro lugar
+      return null;
     }
-
-    // Se a sessão expirou, removemos a antiga antes de criar a nova
     await supabase.from('user_sessions').delete().eq('user_id', userId);
   }
 
-  // Cria nova sessão
   const { error } = await supabase
     .from('user_sessions')
     .insert([{
@@ -119,33 +153,16 @@ export async function updateHeartbeat(sessionToken: string): Promise<boolean> {
   if (error || !data) {
     return false;
   }
-  
-  // Opcional: Verificar se o usuário ainda existe e está ativo
+
   const { data: userData } = await supabase
     .from('access_passwords')
-    .select('active, paid_until')
+    .select('active')
     .eq('id', data.user_id)
     .single();
 
   if (!userData || !userData.active) return false;
 
   return true;
-}
-
-/**
- * Verifica se o usuário tem acesso pago ativo.
- */
-export async function checkAccessStatus(userId: string): Promise<{ isPaid: boolean; paidUntil: string | null }> {
-  const { data, error } = await supabase
-    .from('access_passwords')
-    .select('paid_until')
-    .eq('id', userId)
-    .single();
-
-  if (error || !data) return { isPaid: false, paidUntil: null };
-
-  const isPaid = new Date(data.paid_until) > new Date();
-  return { isPaid, paidUntil: data.paid_until };
 }
 
 /**
@@ -160,4 +177,3 @@ export async function clearSession(sessionToken: string): Promise<void> {
   localStorage.removeItem('session_token');
   localStorage.removeItem('user_id');
 }
-

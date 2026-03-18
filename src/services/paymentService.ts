@@ -1,72 +1,93 @@
 import { supabase } from './supabaseClient';
 
+const SUPABASE_FUNCTIONS_URL = 'https://whiirzvisztjhprxkkoq.supabase.co/functions/v1';
+
+export const CREDIT_PACKAGES = [
+  { amount: 1,  credits: 1,  label: 'Starter',    color: 'bg-slate-600' },
+  { amount: 5,  credits: 6,  label: 'Básico',      color: 'bg-blue-600' },
+  { amount: 10, credits: 13, label: 'Profissional', color: 'bg-red-600' },
+  { amount: 20, credits: 27, label: 'Empresarial',  color: 'bg-emerald-600' },
+];
+
 export interface PaymentData {
   id: string;
   user_id: string;
   amount: number;
-  status: 'pending' | 'completed' | 'cancelled';
+  credits: number;
+  status: 'pending' | 'approved' | 'cancelled';
   pix_qr_code: string;
   created_at: string;
 }
 
 /**
- * Gera um pagamento PIX simulado para o usuário.
+ * Gera um pagamento PIX via Edge Function.
  */
-export async function generatePixPayment(userId: string, amount: number = 29.90): Promise<PaymentData | null> {
-  // Simulando um payload de PIX Copia e Cola (Payload estático para demonstração)
-  // Em produção, você chamaria a API do seu gateway aqui.
-  const pixPayload = `00020126580014br.gov.bcb.pix0136marcelodias@pix.com.br5204000053039865405${amount.toFixed(2)}5802BR5912Marcelo Dias6008SAO PAULO62070503***6304E2CA`;
+export async function generatePixPayment(userId: string, amount: number): Promise<PaymentData | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  const { data, error } = await supabase
-    .from('payments')
-    .insert([{
-      user_id: userId,
-      amount: amount,
-      status: 'pending',
-      pix_qr_code: pixPayload
-    }])
-    .select()
-    .single();
+    const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/generate-pix`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+        'Authorization': `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({ user_id: userId, amount }),
+    });
 
-  if (error) {
-    console.error('[Supabase] Erro ao gerar pagamento:', error.message);
+    if (!response.ok) {
+      const err = await response.json();
+      console.error('[PIX] Erro na Edge Function:', err.error);
+      return null;
+    }
+
+    const result = await response.json();
+
+    // Retorna o pagamento em formato compatível com o App.tsx
+    const { data } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('id', result.payment_id)
+      .single();
+
+    return data;
+  } catch (err: any) {
+    console.error('[PIX] Erro ao gerar pagamento:', err.message);
     return null;
   }
-
-  return data;
 }
 
 /**
- * Simula a confirmação de um pagamento.
- * Em produção, isso seria feito via Webhook do seu banco/gateway.
+ * Simula a confirmação de um pagamento (para testes sem webhook real).
+ * Em produção, isso é feito pelo webhook do Mercado Pago automaticamente.
  */
-export async function simulatePaymentSuccess(paymentId: string, userId: string): Promise<boolean> {
-  // 1. Atualiza o status do pagamento para completed
-  const { error: paymentError } = await supabase
-    .from('payments')
-    .update({ status: 'completed', updated_at: new Date().toISOString() })
-    .eq('id', paymentId);
+export async function simulatePaymentSuccess(paymentId: string): Promise<boolean> {
+  try {
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  if (paymentError) {
-    console.error('[Supabase] Erro ao atualizar pagamento:', paymentError.message);
+    const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/pix-webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+        'Authorization': `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({ payment_id: paymentId, simulate: true }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      console.error('[PIX] Erro ao simular pagamento:', err.error);
+      return false;
+    }
+
+    return true;
+  } catch (err: any) {
+    console.error('[PIX] Erro ao confirmar pagamento:', err.message);
     return false;
   }
-
-  // 2. Libera o acesso para o usuário (ex: +30 dias a partir de hoje)
-  const paidUntil = new Date();
-  paidUntil.setDate(paidUntil.getDate() + 30);
-
-  const { error: userError } = await supabase
-    .from('access_passwords')
-    .update({ paid_until: paidUntil.toISOString() })
-    .eq('id', userId);
-
-  if (userError) {
-    console.error('[Supabase] Erro ao atualizar créditos do usuário:', userError.message);
-    return false;
-  }
-
-  return true;
 }
 
 /**

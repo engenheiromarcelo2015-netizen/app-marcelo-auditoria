@@ -12,12 +12,14 @@ import {
   clearSession, 
   registerUser,
   checkAccessStatus,
+  consumeCredit,
   UserData
 } from './services/authService';
 import { 
   generatePixPayment, 
   simulatePaymentSuccess, 
   getLatestPendingPayment,
+  CREDIT_PACKAGES,
   PaymentData
 } from './services/paymentService';
 import { 
@@ -28,7 +30,6 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Download, 
-  Lightbulb,
   MonitorCheck,
   Lock,
   LogIn,
@@ -37,7 +38,11 @@ import {
   ArrowLeft,
   QrCode,
   CreditCard,
-  ExternalLink
+  ExternalLink,
+  Coins,
+  ShoppingCart,
+  Zap,
+  Lightbulb
 } from 'lucide-react';
 
 // Senhas gerenciadas no Supabase (tabela access_passwords)
@@ -45,8 +50,8 @@ import {
 const App: React.FC = () => {
   // ── Auth ──
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isPaid, setIsPaid] = useState(false);
-  const [authView, setAuthView] = useState<'login' | 'register' | 'payment'>('login');
+  const [credits, setCredits] = useState(0);
+  const [authView, setAuthView] = useState<'login' | 'register' | 'buy'>('login');
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
   
   // States para Forms
@@ -62,6 +67,7 @@ const App: React.FC = () => {
   // ── Payment ──
   const [activePayment, setActivePayment] = useState<PaymentData | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [selectedPackage, setSelectedPackage] = useState(CREDIT_PACKAGES[2]); // Profissional padrão
 
   // ── App ──
   const [files, setFiles] = useState<{ name: string; text: string }[]>([]);
@@ -78,14 +84,12 @@ const App: React.FC = () => {
     const recoveredUserId = localStorage.getItem('user_id');
 
     if (recoveredToken && recoveredUserId) {
-      // Tenta validar a sessão existente no banco
       updateHeartbeat(recoveredToken).then(async valid => {
         if (valid) {
-          const { isPaid: paid } = await checkAccessStatus(recoveredUserId);
-          setIsPaid(paid);
+          const { credits: c } = await checkAccessStatus(recoveredUserId);
+          setCredits(c);
           setIsAuthenticated(true);
           setSessionToken(recoveredToken);
-          if (!paid) setAuthView('payment');
         } else {
           handleLogout();
         }
@@ -102,9 +106,8 @@ const App: React.FC = () => {
             handleLogout();
             setLoginError('Sua sessão expirou ou foi encerrada em outro dispositivo.');
           } else {
-            // Verifica se o pagamento ainda é válido
-            const { isPaid: paid } = await checkAccessStatus(currentUserId);
-            setIsPaid(paid);
+            const { credits: c } = await checkAccessStatus(currentUserId);
+            setCredits(c);
           }
         });
       }
@@ -119,7 +122,7 @@ const App: React.FC = () => {
       await clearSession(currentToken);
     }
     setIsAuthenticated(false);
-    setIsPaid(false);
+    setCredits(0);
     setSessionToken(null);
     setCurrentUser(null);
     setAuthView('login');
@@ -137,23 +140,9 @@ const App: React.FC = () => {
       if (token) {
         setSessionToken(token);
         setCurrentUser(userData);
-        
-        // Verifica pagamento
-        const { isPaid: paid } = await checkAccessStatus(userData.id);
-        setIsPaid(paid);
+        const { credits: c } = await checkAccessStatus(userData.id);
+        setCredits(c);
         setIsAuthenticated(true);
-        
-        if (!paid) {
-          setAuthView('payment');
-          // Busca ou gera pagamento pendente
-          const existing = await getLatestPendingPayment(userData.id);
-          if (existing) {
-            setActivePayment(existing);
-          } else {
-            const newPayment = await generatePixPayment(userData.id);
-            setActivePayment(newPayment);
-          }
-        }
         return true;
       } else {
         setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
@@ -189,20 +178,38 @@ const App: React.FC = () => {
     }
   };
 
+  const handleBuyCredits = async () => {
+    if (!currentUser) return;
+    setPaymentLoading(true);
+    setLoginError(null);
+    try {
+      const payment = await generatePixPayment(currentUser.id, selectedPackage.amount);
+      if (payment) {
+        setActivePayment(payment);
+      } else {
+        setLoginError('Erro ao gerar cobrança PIX. Tente novamente.');
+      }
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
   const handleSimulatePayment = async () => {
     if (!activePayment || !currentUser) return;
     setPaymentLoading(true);
-    const success = await simulatePaymentSuccess(activePayment.id, currentUser.id);
+    const success = await simulatePaymentSuccess(activePayment.id);
     if (success) {
-      setIsPaid(true);
+      // Atualiza crédito local imediatamente
+      setCredits(prev => prev + (activePayment.credits || selectedPackage.credits));
       setActivePayment(null);
+      setAuthView('login'); // Volta para o app
     } else {
       setLoginError('Erro ao processar pagamento simulado.');
     }
     setPaymentLoading(false);
   };
 
-  if (!isAuthenticated || !isPaid) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="w-full max-w-sm">
@@ -337,64 +344,116 @@ const App: React.FC = () => {
             </form>
           )}
 
-          {authView === 'payment' && (
-            <div className="bg-slate-800 rounded-2xl p-8 shadow-2xl border border-slate-700 space-y-6 animate-fade-in text-center">
-              <div className="space-y-2">
-                <h2 className="text-white font-black uppercase tracking-widest text-lg">Acesso Bloqueado</h2>
-                <p className="text-slate-400 text-xs font-medium">Sua conta está ativa, mas você precisa de um plano para liberar os recursos de auditoria.</p>
+          {authView === 'buy' && (
+            <div className="bg-slate-800 rounded-2xl p-6 shadow-2xl border border-slate-700 space-y-5 animate-fade-in">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => { setAuthView('login'); setActivePayment(null); setLoginError(null); }}
+                  className="flex items-center gap-1 text-slate-400 hover:text-white text-[10px] font-black uppercase"
+                >
+                  <ArrowLeft className="w-3 h-3" /> Voltar
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <Coins className="w-4 h-4 text-yellow-400" />
+                  <span className="text-yellow-400 font-black text-sm">{credits} crédito{credits !== 1 ? 's' : ''}</span>
+                </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Plano Mensal</span>
-                  <span className="text-white font-black text-sm">R$ 29,90</span>
-                </div>
-                
-                <div className="bg-white p-4 rounded-xl inline-block mx-auto">
-                  {/* Simulação de QR Code */}
-                  <QrCode className="w-32 h-32 text-slate-900" />
-                </div>
+              <h2 className="text-white font-black uppercase tracking-widest text-sm">Comprar Créditos</h2>
+              <p className="text-slate-400 text-xs">Cada análise consome 1 crédito.</p>
 
+              {/* Pacotes */}
+              {!activePayment ? (
                 <div className="space-y-3">
-                  <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">PIX Copia e Cola:</div>
-                  <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 text-[10px] text-slate-300 font-mono break-all line-clamp-2">
-                    {activePayment?.pix_qr_code || 'Gerando código...'}
+                  <div className="grid grid-cols-2 gap-2">
+                    {CREDIT_PACKAGES.map((pkg) => (
+                      <button
+                        key={pkg.amount}
+                        onClick={() => setSelectedPackage(pkg)}
+                        className={`flex flex-col p-3 rounded-xl border-2 text-left transition-all ${
+                          selectedPackage.amount === pkg.amount
+                            ? 'border-red-500 bg-red-900/20'
+                            : 'border-slate-600 bg-slate-900 hover:border-slate-400'
+                        }`}
+                      >
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{pkg.label}</span>
+                        <span className="text-white font-black text-lg mt-1">R$ {pkg.amount.toFixed(2)}</span>
+                        <div className="flex items-center gap-1 mt-1">
+                          <Coins className="w-3 h-3 text-yellow-400" />
+                          <span className="text-yellow-400 text-[10px] font-black">{pkg.credits} crédito{pkg.credits !== 1 ? 's' : ''}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                  <button 
-                    onClick={() => navigator.clipboard.writeText(activePayment?.pix_qr_code || '')}
-                    className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-widest py-2"
+
+                  <button
+                    onClick={handleBuyCredits}
+                    disabled={paymentLoading}
+                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-black py-3 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
                   >
-                    <ExternalLink className="w-3 h-3" /> Copiar Código PIX
+                    {paymentLoading ? (
+                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <ShoppingCart className="w-4 h-4" />
+                    )}
+                    {paymentLoading ? 'Gerando PIX...' : `Pagar R$ ${selectedPackage.amount.toFixed(2)} via PIX`}
                   </button>
                 </div>
-              </div>
+              ) : (
+                /* Tela de pagamento ativo */
+                <div className="space-y-4">
+                  <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-center space-y-2">
+                    <QrCode className="w-20 h-20 text-slate-400 mx-auto" />
+                    <p className="text-white font-black text-sm">{selectedPackage.credits} créditos por R$ {selectedPackage.amount.toFixed(2)}</p>
+                    <p className="text-slate-400 text-[10px]">PIX Copia e Cola:</p>
+                    <div className="bg-slate-800 rounded-lg p-2 text-[9px] text-slate-300 font-mono break-all line-clamp-3">
+                      {activePayment.pix_qr_code}
+                    </div>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(activePayment?.pix_qr_code || '')}
+                      className="text-[10px] text-slate-400 hover:text-white font-black uppercase flex items-center justify-center gap-1 w-full"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Copiar Código PIX
+                    </button>
+                  </div>
 
-              <div className="space-y-3">
-                <button
-                  onClick={handleSimulatePayment}
-                  disabled={paymentLoading || !activePayment}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black py-4 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
-                >
-                  {paymentLoading ? (
-                    <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <CreditCard className="w-4 h-4" />
-                  )}
-                  {paymentLoading ? 'Confirmando...' : 'Confirmar Pagamento'}
-                </button>
-                
-                <button 
-                  onClick={handleLogout}
-                  className="w-full text-slate-500 hover:text-slate-300 text-[10px] font-black uppercase tracking-widest"
-                >
-                  Sair do Sistema
-                </button>
-              </div>
+                  <button
+                    onClick={handleSimulatePayment}
+                    disabled={paymentLoading}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black py-3 px-4 rounded-xl transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                  >
+                    {paymentLoading ? (
+                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <Zap className="w-4 h-4" />
+                    )}
+                    {paymentLoading ? 'Confirmando...' : 'Confirmar Pagamento (Simulação)'}
+                  </button>
 
-              <div className="flex items-center justify-center gap-2 opacity-50">
-                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                <span className="text-[9px] text-slate-400 uppercase font-black tracking-widest">Liberação Imediata via PIX</span>
-              </div>
+                  <button
+                    onClick={() => setActivePayment(null)}
+                    className="w-full text-slate-500 hover:text-slate-300 text-[10px] font-black uppercase tracking-widest"
+                  >
+                    ← Escolher outro pacote
+                  </button>
+                </div>
+              )}
+
+              {loginError && (
+                <div className="flex items-center gap-2 bg-red-900/30 border border-red-800 rounded-xl p-3">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <p className="text-red-400 text-xs font-bold">{loginError}</p>
+                </div>
+              )}
+
+              <button
+                onClick={handleLogout}
+                className="w-full text-slate-600 hover:text-slate-300 text-[10px] font-black uppercase tracking-widest"
+              >
+                Sair do Sistema
+              </button>
             </div>
           )}
 
@@ -456,6 +515,17 @@ const App: React.FC = () => {
       setError("Por favor, anexe ao menos um arquivo antes de iniciar.");
       return;
     }
+
+    if (!currentUser) return;
+
+    // Consome 1 crédito antes de iniciar (validação no backend)
+    const consumed = await consumeCredit(currentUser.id);
+    if (!consumed) {
+      setError("Você não possui créditos suficientes. Adquira mais créditos para continuar.");
+      setAuthView('buy');
+      return;
+    }
+    setCredits(prev => Math.max(0, prev - 1));
 
     setLoading(true);
     setError(null);
@@ -627,7 +697,14 @@ const App: React.FC = () => {
 
   return (
     <Layout>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end mb-4 gap-3">
+        <button
+          onClick={() => setAuthView('buy')}
+          className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-yellow-500/20 shadow-lg"
+        >
+          <Coins className="w-3 h-3" />
+          {credits} crédito{credits !== 1 ? 's' : ''}
+        </button>
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-slate-700 shadow-lg"
@@ -706,13 +783,23 @@ const App: React.FC = () => {
                   </div>
 
                   {!loading && (
-                    <button 
-                      onClick={startAnalysis}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 px-4 rounded-xl shadow-lg shadow-red-100 transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2"
-                    >
-                      <Play className="w-4 h-4 fill-current" />
-                      Iniciar Verificação Técnica
-                    </button>
+                    credits > 0 ? (
+                      <button 
+                        onClick={startAnalysis}
+                        className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 px-4 rounded-xl shadow-lg shadow-red-100 transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                      >
+                        <Play className="w-4 h-4 fill-current" />
+                        Iniciar Verificação Técnica
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => setAuthView('buy')}
+                        className="w-full bg-yellow-500 hover:bg-yellow-600 text-slate-900 font-black py-4 px-4 rounded-xl shadow-lg transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                      >
+                        <Coins className="w-4 h-4" />
+                        Sem créditos — Comprar
+                      </button>
+                    )
                   )}
                 </div>
               )}
