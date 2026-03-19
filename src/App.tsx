@@ -643,9 +643,24 @@ const App: React.FC = () => {
         margin: { top: 20 }
       });
 
-      // Isenção de Responsabilidade (Aviso Legal)
-      const finalY = (doc as any).lastAutoTable.finalY + 15;
-      if (finalY < 240) {
+      // Documentos Analisados e Isenção de Responsabilidade
+      let finalY = (doc as any).lastAutoTable.finalY + 15;
+
+      if (files.length > 0) {
+        doc.setFontSize(9);
+        doc.setTextColor(50, 50, 50);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Documentos Analisados:', 14, finalY);
+        doc.setFont('helvetica', 'normal');
+        
+        const fileNames = files.map(f => f.name).join(', ');
+        const splitFileNames = doc.splitTextToSize(fileNames, 180);
+        doc.text(splitFileNames, 14, finalY + 5);
+        
+        finalY = finalY + 5 + (splitFileNames.length * 4) + 10;
+      }
+
+      if (finalY < 270) {
         doc.setFontSize(8);
         doc.setTextColor(100);
         doc.setFont('helvetica', 'bold');
