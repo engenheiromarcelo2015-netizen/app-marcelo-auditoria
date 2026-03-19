@@ -76,9 +76,10 @@ const App: React.FC = () => {
   const [analysisModes, setAnalysisModes] = useState<AnalysisMode[]>(['IATF']);
   const [savedToDb, setSavedToDb] = useState<boolean | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(localStorage.getItem('session_token'));
+  const [forceBypass, setForceBypass] = useState(false);
 
   // ── Constantes e Derivados ──
-  const MAX_TOKENS = 2000;
+  const MAX_TOKENS = 210000;
   const estimatedTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
   const isOverLimit = estimatedTokens > MAX_TOKENS;
 
@@ -532,7 +533,20 @@ const App: React.FC = () => {
       setError(`Falha na IA: ${errorMsg}`);
     } finally {
       setLoading(false);
+      setForceBypass(false);
     }
+  };
+
+  const handleStartAnalysisClick = () => {
+    if (isOverLimit) {
+      if (!forceBypass) {
+        setForceBypass(true);
+        // Reseta o estado após 4 segundos
+        setTimeout(() => setForceBypass(false), 4000);
+        return;
+      }
+    }
+    startAnalysis();
   };
 
   const removeFile = (index: number) => {
@@ -700,7 +714,12 @@ const App: React.FC = () => {
 
   return (
     <Layout>
-      <div className="flex justify-end mb-4 gap-3">
+      <div className="flex justify-end items-center mb-4 gap-3">
+        {currentUser && (
+           <span className="text-[10px] uppercase font-black tracking-widest text-slate-400 mr-1 opacity-70">
+             Logado como: {currentUser.login}
+           </span>
+        )}
         <button
           onClick={() => setAuthView('buy')}
           className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-yellow-500/20 shadow-lg"
@@ -803,11 +822,11 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {isOverLimit && (
+                  {isOverLimit && !forceBypass && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl">
                       <p className="text-[10px] text-red-600 font-bold text-center leading-relaxed">
-                        ⚠️ Límite Excedido.<br/>
-                        A IA não processará tudo. Reduza os arquivos para não desperdiçar crédito.
+                        ⚠️ Limite Excedido.<br/>
+                        A IA pode ter falhas de processamento em documentos tão grandes. 
                       </p>
                     </div>
                   )}
@@ -815,16 +834,22 @@ const App: React.FC = () => {
                   {!loading && (
                     credits > 0 ? (
                       <button 
-                        onClick={startAnalysis}
-                        disabled={isOverLimit}
+                        onClick={handleStartAnalysisClick}
                         className={`w-full font-black py-4 px-4 rounded-xl shadow-lg transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2 ${
-                          isOverLimit 
-                            ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' 
-                            : 'bg-red-600 hover:bg-red-700 text-white shadow-red-100'
+                          isOverLimit && !forceBypass
+                            ? 'bg-slate-300 text-slate-500 shadow-none border-2 border-dashed border-slate-400 hover:bg-slate-400 hover:text-white' 
+                            : isOverLimit && forceBypass
+                              ? 'bg-red-600 text-white shadow-red-100 animate-pulse ring-4 ring-red-500/30'
+                              : 'bg-red-600 hover:bg-red-700 text-white shadow-red-100'
                         }`}
                       >
-                        <Play className="w-4 h-4 fill-current" />
-                        Iniciar Verificação Técnica
+                        {isOverLimit && !forceBypass ? (
+                          <>⚠️ Excedido (Clique 2x p/ Forçar)</>
+                        ) : isOverLimit && forceBypass ? (
+                          <>⚠️ Confirmar Envio Forçado</>
+                        ) : (
+                          <><Play className="w-4 h-4 fill-current" /> Iniciar Verificação Técnica</>
+                        )}
                       </button>
                     ) : (
                       <button 
