@@ -60,36 +60,6 @@ export async function generatePixPayment(userId: string, amount: number): Promis
   }
 }
 
-/**
- * Simula a confirmação de um pagamento (para testes sem webhook real).
- * Em produção, isso é feito pelo webhook do Mercado Pago automaticamente.
- */
-export async function simulatePaymentSuccess(paymentId: string): Promise<boolean> {
-  try {
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    const response = await fetch(`${SUPABASE_FUNCTIONS_URL}/pix-webhook`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-      },
-      body: JSON.stringify({ payment_id: paymentId, simulate: true }),
-    });
-
-    if (!response.ok) {
-      const err = await response.json();
-      console.error('[PIX] Erro ao simular pagamento:', err.error);
-      return false;
-    }
-
-    return true;
-  } catch (err: any) {
-    console.error('[PIX] Erro ao confirmar pagamento:', err.message);
-    return false;
-  }
-}
 
 /**
  * Busca o último pagamento pendente do usuário.

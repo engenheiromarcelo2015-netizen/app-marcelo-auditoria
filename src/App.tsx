@@ -17,7 +17,6 @@ import {
 } from './services/authService';
 import { 
   generatePixPayment, 
-  simulatePaymentSuccess, 
   getLatestPendingPayment,
   CREDIT_PACKAGES,
   PaymentData
@@ -192,21 +191,6 @@ const App: React.FC = () => {
     } finally {
       setPaymentLoading(false);
     }
-  };
-
-  const handleSimulatePayment = async () => {
-    if (!activePayment || !currentUser) return;
-    setPaymentLoading(true);
-    const success = await simulatePaymentSuccess(activePayment.id);
-    if (success) {
-      // Atualiza crédito local imediatamente
-      setCredits(prev => prev + (activePayment.credits || selectedPackage.credits));
-      setActivePayment(null);
-      setAuthView('login'); // Volta para o app
-    } else {
-      setLoginError('Erro ao processar pagamento simulado.');
-    }
-    setPaymentLoading(false);
   };
 
   if (!isAuthenticated || authView === 'buy') {
@@ -425,21 +409,11 @@ const App: React.FC = () => {
                     >
                       <ExternalLink className="w-3 h-3" /> Copiar Código PIX
                     </button>
+                    <div className="mt-4 pt-4 border-t border-slate-800 opacity-60 flex flex-col items-center gap-1">
+                       <CheckCircle2 className="w-4 h-4 text-emerald-500 mb-1" />
+                       <span className="text-[9px] uppercase tracking-widest text-slate-400">Liberação automática após PIX</span>
+                    </div>
                   </div>
-
-                  {/* O botão abaixo é temporário para você testar a simulação mesmo sem o webhook real */}
-                  <button
-                    onClick={handleSimulatePayment}
-                    disabled={paymentLoading}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black py-3 px-4 rounded-xl transition-all uppercase text-xs tracking-widest flex items-center justify-center gap-2"
-                  >
-                    {paymentLoading ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <Zap className="w-4 h-4" />
-                    )}
-                    {paymentLoading ? 'Confirmando...' : 'Confirmar Pagamento (Simulação)'}
-                  </button>
 
                   <button
                     onClick={() => setActivePayment(null)}
