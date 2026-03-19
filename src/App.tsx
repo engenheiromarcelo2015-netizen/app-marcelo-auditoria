@@ -949,6 +949,9 @@ const App: React.FC = () => {
                 <p className="text-slate-500 mt-4 text-sm leading-relaxed font-medium">
                   Bem-vindo ao <span className="text-red-600 font-bold">App Marcelo Dias</span>. Selecione o escopo da análise, faça o upload dos seus documentos e deixe nossa IA validar sua conformidade técnica em tempo real.
                 </p>
+                <p className="text-slate-400 mt-6 text-[11px] leading-relaxed border-t border-slate-100 pt-6 italic">
+                  As análises possuem limite de processamento em tokens, informado no momento do upload. Cada análise corresponde ao consumo de 1 crédito. O usuário é responsável por verificar essas informações antes de confirmar o envio. Caso o arquivo ultrapasse o limite estabelecido, recomenda-se reduzir o conteúdo (por exemplo, diminuir o número de páginas) até que esteja dentro do limite permitido.
+                </p>
               </div>
             </div>
           )}
