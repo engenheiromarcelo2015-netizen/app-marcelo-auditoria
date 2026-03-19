@@ -77,6 +77,11 @@ const App: React.FC = () => {
   const [savedToDb, setSavedToDb] = useState<boolean | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(localStorage.getItem('session_token'));
 
+  // ── Constantes e Derivados ──
+  const MAX_TOKENS = 2000;
+  const estimatedTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
+  const isOverLimit = estimatedTokens > MAX_TOKENS;
+
   // ── Session Heartbeat & Recovery ──
   React.useEffect(() => {
     const recoveredToken = localStorage.getItem('session_token');
@@ -780,11 +785,43 @@ const App: React.FC = () => {
                     ))}
                   </div>
 
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                        Estimativa de Tokens (Conteúdo)
+                      </span>
+                      <span className={`text-[10px] font-black uppercase tracking-widest ${isOverLimit ? 'text-red-600' : 'text-emerald-500'}`}>
+                        {estimatedTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')}
+                      </span>
+                    </div>
+                    {/* Barra de progresso dos tokens */}
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className={`h-full ${isOverLimit ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${Math.min((estimatedTokens / MAX_TOKENS) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {isOverLimit && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl">
+                      <p className="text-[10px] text-red-600 font-bold text-center leading-relaxed">
+                        ⚠️ Límite Excedido.<br/>
+                        A IA não processará tudo. Reduza os arquivos para não desperdiçar crédito.
+                      </p>
+                    </div>
+                  )}
+
                   {!loading && (
                     credits > 0 ? (
                       <button 
                         onClick={startAnalysis}
-                        className="w-full bg-red-600 hover:bg-red-700 text-white font-black py-4 px-4 rounded-xl shadow-lg shadow-red-100 transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2"
+                        disabled={isOverLimit}
+                        className={`w-full font-black py-4 px-4 rounded-xl shadow-lg transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2 ${
+                          isOverLimit 
+                            ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none' 
+                            : 'bg-red-600 hover:bg-red-700 text-white shadow-red-100'
+                        }`}
                       >
                         <Play className="w-4 h-4 fill-current" />
                         Iniciar Verificação Técnica
