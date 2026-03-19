@@ -79,7 +79,7 @@ const App: React.FC = () => {
   const [forceBypass, setForceBypass] = useState(false);
 
   // ── Constantes e Derivados ──
-  const MAX_TOKENS = 210000;
+  const MAX_TOKENS = 100000;
   const estimatedTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
   const isOverLimit = estimatedTokens > MAX_TOKENS;
 
