@@ -16,6 +16,7 @@ export interface PaymentData {
   credits: number;
   status: 'pending' | 'approved' | 'cancelled';
   pix_qr_code: string;
+  pix_qr_code_base64: string | null;
   created_at: string;
 }
 

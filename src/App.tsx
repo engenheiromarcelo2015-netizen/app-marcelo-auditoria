@@ -405,7 +405,15 @@ const App: React.FC = () => {
                 /* Tela de pagamento ativo */
                 <div className="space-y-4">
                   <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-center space-y-2">
-                    <QrCode className="w-20 h-20 text-slate-400 mx-auto" />
+                    {activePayment.pix_qr_code_base64 ? (
+                      <img 
+                        src={`data:image/png;base64,${activePayment.pix_qr_code_base64}`} 
+                        alt="QR Code PIX" 
+                        className="w-32 h-32 mx-auto rounded-lg bg-white p-2"
+                      />
+                    ) : (
+                      <QrCode className="w-20 h-20 text-slate-400 mx-auto" />
+                    )}
                     <p className="text-white font-black text-sm">{selectedPackage.credits} créditos por R$ {selectedPackage.amount.toFixed(2)}</p>
                     <p className="text-slate-400 text-[10px]">PIX Copia e Cola:</p>
                     <div className="bg-slate-800 rounded-lg p-2 text-[9px] text-slate-300 font-mono break-all line-clamp-3">
@@ -419,6 +427,7 @@ const App: React.FC = () => {
                     </button>
                   </div>
 
+                  {/* O botão abaixo é temporário para você testar a simulação mesmo sem o webhook real */}
                   <button
                     onClick={handleSimulatePayment}
                     disabled={paymentLoading}
