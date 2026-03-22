@@ -610,8 +610,20 @@ const App: React.FC = () => {
       
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
-      doc.text(`IATF 16949: ${summary.complianceProgress.iatf}%`, 14, 37);
-      doc.text(`ISO 14001: ${summary.complianceProgress.iso14001}%`, 14, 41.5);
+      
+      let currentY = 37;
+      if (analysisModes.includes('IATF')) {
+        doc.text(`IATF 16949: ${summary.complianceProgress.iatf}%`, 14, currentY);
+        currentY += 4.5;
+      }
+      if (analysisModes.includes('ISO 14001')) {
+        doc.text(`ISO 14001: ${summary.complianceProgress.iso14001}%`, 14, currentY);
+        currentY += 4.5;
+      }
+      if (analysisModes.includes('ISO 9001 + E1')) {
+        doc.text(`ISO 9001 + E1: ${summary.complianceProgress.iso9001}%`, 14, currentY);
+        currentY += 4.5;
+      }
 
       // Coluna Direita: Desvios
       doc.setFont('helvetica', 'bold');
@@ -902,15 +914,25 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                    <div className="text-[10px] font-bold text-red-200 uppercase mb-1 opacity-60">IATF</div>
-                    <div className="text-xl font-black">{summary.complianceProgress.iatf}%</div>
-                  </div>
-                  <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                    <div className="text-[10px] font-bold text-green-300 uppercase mb-1 opacity-60">ISO 14001</div>
-                    <div className="text-xl font-black">{summary.complianceProgress.iso14001}%</div>
-                  </div>
+                <div className={`grid gap-2 ${analysisModes.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                  {analysisModes.includes('IATF') && (
+                    <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                      <div className="text-[10px] font-bold text-red-200 uppercase mb-1 opacity-60">IATF</div>
+                      <div className="text-xl font-black">{summary.complianceProgress.iatf}%</div>
+                    </div>
+                  )}
+                  {analysisModes.includes('ISO 14001') && (
+                    <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                      <div className="text-[10px] font-bold text-green-300 uppercase mb-1 opacity-60">ISO 14001</div>
+                      <div className="text-xl font-black">{summary.complianceProgress.iso14001}%</div>
+                    </div>
+                  )}
+                  {analysisModes.includes('ISO 9001 + E1') && (
+                    <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                      <div className="text-[10px] font-bold text-blue-300 uppercase mb-1 opacity-60">ISO 9001 + E1</div>
+                      <div className="text-xl font-black">{summary.complianceProgress.iso9001}%</div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

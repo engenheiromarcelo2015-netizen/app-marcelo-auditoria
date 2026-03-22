@@ -56,9 +56,10 @@ export const analyzeDocuments = async (
               type: Type.OBJECT,
               properties: {
                 iatf: { type: Type.NUMBER, description: "Progresso IATF 0-100" },
-                iso14001: { type: Type.NUMBER, description: "Progresso ISO 14001 0-100" }
+                iso14001: { type: Type.NUMBER, description: "Progresso ISO 14001 0-100" },
+                iso9001: { type: Type.NUMBER, description: "Progresso ISO 9001 0-100" }
               },
-              required: ["iatf", "iso14001"]
+              required: ["iatf", "iso14001", "iso9001"]
             },
             findings: {
               type: Type.ARRAY,

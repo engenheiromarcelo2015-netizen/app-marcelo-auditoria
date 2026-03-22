@@ -23,6 +23,7 @@ export interface DocumentSummary {
   complianceProgress: {
     iatf: number;
     iso14001: number;
+    iso9001: number;
   };
 }
 

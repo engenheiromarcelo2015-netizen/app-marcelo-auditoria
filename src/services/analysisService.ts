@@ -12,6 +12,7 @@ export interface SavedAnalysis {
   minor_issues: number;
   iatf_progress: number;
   iso14001_progress: number;
+  iso9001_progress: number;
   file_names: string[];
   findings?: AnalysisResult[];
 }
@@ -37,6 +38,7 @@ export async function saveAnalysis(
         minor_issues: summary.minorIssues,
         iatf_progress: summary.complianceProgress.iatf,
         iso14001_progress: summary.complianceProgress.iso14001,
+        iso9001_progress: summary.complianceProgress.iso9001,
         file_names: fileNames,
       })
       .select('id')
