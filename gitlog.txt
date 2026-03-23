@@ -1,0 +1,24 @@
+5e96f30d5c809edbeeaaf94f29a9bfbbd5b65341 Fix Gemini 400 error: definitive use of input and inlineData with mime_type
+86f2ff587c211c11f2ba4211ef870e4473c67db7 Fix Gemini 400 error: use high-level input and type-ed content for Unified SDK
+5f37ffab4fd758b4e144c3c482e46aba90c340d6 Fix Gemini 404: use v1 for API version
+a46e405f46cd90eae019b7f432a53ec544142f12 Fix Gemini 400 error: use snake_case and explicit Part objects for Unified SDK
+64c801c28beb57f44dd62efebdf2cec84fac632f Correct model name, add native PDF support, and improve token estimation
+b3d1ab1ac1609f4d07d66826a82fd433797db1d4 Finalize dynamic scan scope (IATF, ISO 14001, ISO 9001 + E1) implementation with Supabase updates
+ddea45fde2bfca1ed6a117b0a0fede35d808531a docs: add token and credit disclaimer to welcome screen
+8493fd1c3fb73b2fb61e2963e083479ea7ef282d fix: adjust max token limit to 100000 and show username in header
+ed71747ed09dbd9fb6c34eccdca2cec8fbf030f7 feat: max tokens bypass override and user display
+0a0c7cb96601ca2094da1460b3bdbd8ad81cd02b feat: token estimation and max tokens enforcement
+097d2f4ba6ebebee015058fe99f535b82cc8f66a feat: display analyzed documents in PDF export
+a23bbf64723da4eef24a150293ffa9e41e2dc136 refactor: remove simulate payment feature
+9215028bbbaa7e40ea1bcebea86ec2c387590675 fix: allow credit purchase screen for authenticated users
+3ee6e1fdca573b5eb8dd98daeb023358a5924a5e feat: real Mercado Pago PIX integration
+db5e7bc10637d7cfeb5d8066d67811af9c8899f6 feat: implement credit-based monetization system with PIX packages
+b9a8db191bb3d94c19ed3e1a0c2b18623a36def1 feat: improve pdf layout and adjust pix payment flow
+fc7aee8e362ba8c8ba3f46431ac1a63721ffea6b Feat: Implementação de cadastro de usuário e pagamento PIX + Correção do caminho do src no index.html
+7ac7961244f982ffe2ec955bcecfc472d03278ec feat: implement single session control with Supabase
+1543bc5f9746d744a401a2f7b30a6f0f873e7d54 fix: resolve vite build error and restore src directory
+c78ef4f1b25142d76e3b50d54a204ca6521dc8ea feat: Add `isAgentChat` helper function to identify agent-initiated chats.
+a6c9c157394710d0952bf4285026ebec13e7b990 chore: add better error handling to identify gemini API network or auth issues
+78ac4fc519571be7cb587be7dd3a5f50bdaad910 fix: change gemini api key to use VITE_ prefix for Vercel deployment
+415b9e068e996eae8cfdc7ccd2b0ec73a63a87ef chore: add vercel.json for SPA routing
+a9fd22eaef6cec59d3ba664d79549f00a3424282 feat: first commit
