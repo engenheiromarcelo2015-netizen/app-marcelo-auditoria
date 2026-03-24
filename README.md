@@ -18,3 +18,29 @@ View your app in AI Studio: https://ai.studio/apps/4d42b456-61ea-47fa-9358-cf093
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Deploy to Vercel
+
+1. Login to Vercel CLI (interactive):
+
+```powershell
+npx vercel login
+npx vercel whoami
+```
+
+2. Deploy to production:
+
+```powershell
+cd "D:/APLICATIVOS REALIZADOS/app-marcelo-auditoria"
+npx vercel --prod
+```
+
+Or non-interactive with token:
+
+```powershell
+$env:VERCEL_TOKEN="SEU_TOKEN"
+cd "D:/APLICATIVOS REALIZADOS/app-marcelo-auditoria"
+npx vercel --prod --token $env:VERCEL_TOKEN
+```
+
+Production URL: https://app-marcelo-auditoria-czld9dyf0.vercel.app
