@@ -2,19 +2,16 @@ import { DocumentSummary } from "../types";
 
 export type AnalysisMode = 'IATF' | 'ISO 14001' | 'ISO 9001 + E1';
 
-export const analyzeDocuments = async (
+export const analyzeDocumentsWithDeepSeek = async (
   files: { name: string; text: string }[],
   modes: AnalysisMode[]
 ): Promise<DocumentSummary> => {
-  // Tenta pegar a chave de diferentes formas
+  // Pega a chave do ambiente
   const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY || 
-                 import.meta.env.DEEPSEEK_API_KEY;
+                 import.meta.env.DEEPSEEK_API_KEY ||
+                 process.env.DEEPSEEK_API_KEY;
   
   if (!apiKey) {
-    console.error("Chave não encontrada. Variáveis disponíveis:", {
-      VITE_DEEPSEEK_API_KEY: import.meta.env.VITE_DEEPSEEK_API_KEY ? "presente" : "ausente",
-      DEEPSEEK_API_KEY: import.meta.env.DEEPSEEK_API_KEY ? "presente" : "ausente"
-    });
     throw new Error("Chave DeepSeek não encontrada. Configure DEEPSEEK_API_KEY no .env.local");
   }
 
@@ -25,7 +22,6 @@ export const analyzeDocuments = async (
     return mode;
   }).join(", ");
 
-  // Limita o tamanho do texto para evitar timeout
   const combinedText = files.map(f => {
     const textoLimitado = f.text.length > 8000 ? f.text.substring(0, 8000) + "..." : f.text;
     return `DOCUMENTO: ${f.name}\nCONTEÚDO:\n${textoLimitado}`;
