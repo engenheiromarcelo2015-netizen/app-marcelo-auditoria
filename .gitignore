@@ -8,4 +8,6 @@ coverage/
 !.env.example
 
 .vercel
+# Ensure local env file is ignored explicitly
+.env.local
 .env*.local
