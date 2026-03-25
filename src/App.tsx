@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import * as pdfjsLib from 'pdfjs-dist';
 import { Layout } from './components/Layout';
 import { FindingsTable } from './components/FindingsTable';
 import { DocumentSummary } from './types';
@@ -43,6 +44,51 @@ import {
   Zap,
   Lightbulb
 } from 'lucide-react';
+
+// Configura worker do pdfjs-dist
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+/**
+ * Extrai texto de um arquivo PDF usando pdfjs-dist.
+ * Se o PDF for baseado em imagem (pouco texto), usa OCR via Tesseract.js.
+ */
+async function extractPdfText(file: File): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+    let fullText = '';
+    const maxPages = Math.min(pdf.numPages, 20); // Limita a 20 páginas
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => item.str)
+        .join(' ');
+      fullText += pageText + '\n';
+    }
+
+    // Se pdfjs não conseguiu extrair texto suficiente (PDF de imagem), usa OCR
+    if (fullText.trim().length < 50) {
+      console.log(`PDF "${file.name}" sem texto extraível, usando OCR...`);
+      const { extractTextFromPDF } = await import('./utils/ocr');
+      fullText = await extractTextFromPDF(file);
+    }
+
+    return fullText;
+  } catch (err) {
+    console.error(`Erro ao extrair texto do PDF "${file.name}":`, err);
+    // Fallback pra OCR em caso de erro no pdfjs
+    try {
+      const { extractTextFromPDF } = await import('./utils/ocr');
+      return await extractTextFromPDF(file);
+    } catch (ocrErr) {
+      console.error('Fallback OCR também falhou:', ocrErr);
+      return '';
+    }
+  }
+}
 
 // Senhas gerenciadas no Supabase (tabela access_passwords)
 
@@ -469,21 +515,31 @@ const App: React.FC = () => {
     if (!uploadedFiles || uploadedFiles.length === 0) return;
 
     setError(null);
+    setLoading(true);
     const fileList = Array.from(uploadedFiles) as File[];
     
     try {
-      const filePromises = fileList.map(file => {
-        return new Promise<{ name: string; text: string }>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            resolve({
-              name: file.name,
-              text: e.target?.result as string || ''
-            });
-          };
-          reader.onerror = reject;
-          reader.readAsText(file);
-        });
+      const filePromises = fileList.map(async (file) => {
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+        if (isPdf) {
+          // Extrair texto do PDF usando pdfjs-dist (com fallback OCR)
+          const text = await extractPdfText(file);
+          return { name: file.name, text };
+        } else {
+          // Para arquivos de texto comum (.txt, .csv, etc.)
+          return new Promise<{ name: string; text: string }>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              resolve({
+                name: file.name,
+                text: e.target?.result as string || ''
+              });
+            };
+            reader.onerror = reject;
+            reader.readAsText(file);
+          });
+        }
       });
 
       const loadedFiles = await Promise.all(filePromises);
@@ -493,7 +549,9 @@ const App: React.FC = () => {
       setSummary(null);
     } catch (err) {
       console.error(err);
-      setError("Erro ao carregar arquivos. Verifique se são formatos de texto válidos.");
+      setError("Erro ao carregar arquivos. Verifique se são formatos válidos.");
+    } finally {
+      setLoading(false);
     }
     // Limpa o input para permitir selecionar os mesmos arquivos se necessário
     event.target.value = '';

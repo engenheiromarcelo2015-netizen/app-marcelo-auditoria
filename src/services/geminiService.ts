@@ -25,7 +25,7 @@ export const analyzeDocuments = async (
     return mode;
   }).join(", ");
 
-  // Limita o tamanho do texto para evitar timeout
+  // Texto já extraído corretamente no upload (pdfjs-dist + OCR fallback)
   const combinedText = files.map(f => {
     const textoLimitado = f.text.length > 8000 ? f.text.substring(0, 8000) + "..." : f.text;
     return `DOCUMENTO: ${f.name}\nCONTEÚDO:\n${textoLimitado}`;
