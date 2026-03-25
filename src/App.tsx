@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
 import { Layout } from './components/Layout';
 import { FindingsTable } from './components/FindingsTable';
 import { DocumentSummary } from './types';
@@ -45,9 +46,11 @@ import {
   Lightbulb
 } from 'lucide-react';
 
-// Configura worker do pdfjs-dist
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configura worker do pdfjs-dist v5 via node_modules
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 /**
  * Extrai texto de um arquivo PDF usando pdfjs-dist.
@@ -56,24 +59,32 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 async function extractPdfText(file: File): Promise<string> {
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
 
     let fullText = '';
-    const maxPages = Math.min(pdf.numPages, 20); // Limita a 20 páginas
+    const maxPages = Math.min(pdf.numPages, 20);
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       const pageText = content.items
+        .filter((item: any) => 'str' in item)
         .map((item: any) => item.str)
         .join(' ');
       fullText += pageText + '\n';
     }
 
+    console.log(`PDF "${file.name}": extraídos ${fullText.trim().length} caracteres via pdfjs`);
+
     // Se pdfjs não conseguiu extrair texto suficiente (PDF de imagem), usa OCR
     if (fullText.trim().length < 50) {
-      console.log(`PDF "${file.name}" sem texto extraível, usando OCR...`);
-      const { extractTextFromPDF } = await import('./utils/ocr');
-      fullText = await extractTextFromPDF(file);
+      console.log(`PDF "${file.name}" sem texto extraível por pdfjs, tentando OCR...`);
+      try {
+        const { extractTextFromPDF } = await import('./utils/ocr');
+        fullText = await extractTextFromPDF(file);
+        console.log(`OCR extraiu ${fullText.trim().length} caracteres`);
+      } catch (ocrErr) {
+        console.error('OCR falhou:', ocrErr);
+      }
     }
 
     return fullText;
@@ -87,6 +98,21 @@ async function extractPdfText(file: File): Promise<string> {
       console.error('Fallback OCR também falhou:', ocrErr);
       return '';
     }
+  }
+}
+
+/**
+ * Extrai texto de um arquivo Word (.docx) usando mammoth.js.
+ */
+async function extractDocxText(file: File): Promise<string> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    console.log(`DOCX "${file.name}": extraídos ${result.value.length} caracteres`);
+    return result.value;
+  } catch (err) {
+    console.error(`Erro ao extrair texto do DOCX "${file.name}":`, err);
+    return '';
   }
 }
 
@@ -520,12 +546,22 @@ const App: React.FC = () => {
     
     try {
       const filePromises = fileList.map(async (file) => {
-        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+        const fileName = file.name.toLowerCase();
+        const isPdf = file.type === 'application/pdf' || fileName.endsWith('.pdf');
+        const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || fileName.endsWith('.docx');
+        const isDoc = file.type === 'application/msword' || fileName.endsWith('.doc');
 
         if (isPdf) {
           // Extrair texto do PDF usando pdfjs-dist (com fallback OCR)
           const text = await extractPdfText(file);
           return { name: file.name, text };
+        } else if (isDocx) {
+          // Extrair texto do Word (.docx) usando mammoth
+          const text = await extractDocxText(file);
+          return { name: file.name, text };
+        } else if (isDoc) {
+          // Arquivo .doc antigo - não suportado nativamente
+          return { name: file.name, text: '[Formato .doc não suportado - por favor converta para .docx ou .pdf]' };
         } else {
           // Para arquivos de texto comum (.txt, .csv, etc.)
           return new Promise<{ name: string; text: string }>((resolve, reject) => {
