@@ -116,6 +116,85 @@ async function extractDocxText(file: File): Promise<string> {
   }
 }
 
+/**
+ * Estima tokens com base em 1 token ≈ 4 caracteres
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Truncamento Inteligente:
+ * Mantém o início do documento e busca parágrafos com palavras-chave vitais
+ * se o limite for ultrapassado.
+ */
+export function truncateByTokens(text: string, maxTokens: number): string {
+  if (estimateTokens(text) <= maxTokens) return text;
+  
+  const maxChars = maxTokens * 4;
+  const keywords = ['resumo', 'objetivo', 'meta', 'financeiro', 'risco', 'escopo', 'conclusão', 'auditoria'];
+  
+  const paragraphs = text.split(/\n\s*\n|\r\n\s*\r\n/);
+  let relevantText = '';
+  let remainingChars = maxChars;
+
+  // 1. Capturar o início (15% do limite permitido)
+  const introLimit = Math.floor(maxChars * 0.15);
+  let initialContent = '';
+  for (let i = 0; i < paragraphs.length; i++) {
+    const p = paragraphs[i];
+    if ((initialContent.length + p.length) < introLimit) {
+      initialContent += p + '\n\n';
+      paragraphs[i] = ''; // Marca como consumido
+    } else {
+      break;
+    }
+  }
+  
+  relevantText += initialContent;
+  remainingChars -= initialContent.length;
+
+  // 2. Buscar parágrafos com palavras-chave relevantes
+  for (let i = 0; i < paragraphs.length; i++) {
+    if (remainingChars <= 0) break;
+    const p = paragraphs[i];
+    if (p.length === 0) continue; 
+    
+    const pLower = p.toLowerCase();
+    const hasKeyword = keywords.some(k => pLower.includes(k));
+    
+    if (hasKeyword) {
+      if (p.length <= remainingChars) {
+        relevantText += p + '\n\n';
+        remainingChars -= p.length + 2;
+      } else {
+        relevantText += p.substring(0, remainingChars) + '...\n\n';
+        remainingChars = 0;
+      }
+      paragraphs[i] = ''; // Marca como consumido
+    }
+  }
+
+  // 3. Se ainda sobrar espaço, preenche sequencialmente
+  if (remainingChars > 100) {
+    for (let i = 0; i < paragraphs.length; i++) {
+      if (remainingChars <= 0) break;
+      const p = paragraphs[i];
+      if (p.length === 0) continue;
+      
+      if (p.length <= remainingChars) {
+        relevantText += p + '\n\n';
+        remainingChars -= p.length + 2;
+      } else {
+        relevantText += p.substring(0, remainingChars) + '...\n\n';
+        remainingChars = 0;
+      }
+    }
+  }
+  
+  return relevantText + "\n\n[AVISO: TEXTO TRUNCADO POR LIMITE DE TOKENS DA IA]";
+}
+
 // Senhas gerenciadas no Supabase (tabela access_passwords)
 
 const App: React.FC = () => {
@@ -151,9 +230,9 @@ const App: React.FC = () => {
   const [forceBypass, setForceBypass] = useState(false);
 
   // ── Constantes e Derivados ──
-  const MAX_TOKENS = 100000;
-  const estimatedTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
-  const isOverLimit = estimatedTokens > MAX_TOKENS;
+  const MAX_TOKENS = 3500;
+  const estimatedCostTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
+  const willTruncate = estimatedCostTokens > MAX_TOKENS;
 
   // ── Session Heartbeat & Recovery ──
   React.useEffect(() => {
@@ -614,7 +693,18 @@ const App: React.FC = () => {
     setError(null);
     setSavedToDb(null);
     try {
-      const analysis = await analyzeDocuments(files, analysisModes);
+      // Aplica limite de tokens combinado
+      const processedFiles = files.map(file => {
+        // Redução proporcional se houver mais de um arquivo
+        const fileProportion = (file.text.length / 4) / (estimatedCostTokens || 1);
+        const tokensForThisFile = files.length === 1 ? MAX_TOKENS : Math.floor(MAX_TOKENS * fileProportion);
+        return {
+          ...file,
+          text: truncateByTokens(file.text, tokensForThisFile)
+        };
+      });
+
+      const analysis = await analyzeDocuments(processedFiles, analysisModes);
       setSummary(analysis);
       // Persiste automaticamente no Supabase
       const fileNames = files.map(f => f.name);
@@ -632,14 +722,8 @@ const App: React.FC = () => {
   };
 
   const handleStartAnalysisClick = () => {
-    if (isOverLimit) {
-      if (!forceBypass) {
-        setForceBypass(true);
-        // Reseta o estado após 4 segundos
-        setTimeout(() => setForceBypass(false), 4000);
-        return;
-      }
-    }
+    // Agora não precisamos bloquear via bypass de 100k,
+    // pois o sistema faz truncamento automaticamente para os 3.5k.
     startAnalysis();
   };
 
@@ -915,24 +999,24 @@ const App: React.FC = () => {
                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
                         Estimativa de Tokens (Conteúdo)
                       </span>
-                      <span className={`text-[10px] font-black uppercase tracking-widest ${isOverLimit ? 'text-red-600' : 'text-emerald-500'}`}>
-                        {estimatedTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')}
+                      <span className={`text-[10px] font-black uppercase tracking-widest ${willTruncate ? 'text-amber-500' : 'text-emerald-500'}`}>
+                        {estimatedCostTokens.toLocaleString('pt-BR')} / {MAX_TOKENS.toLocaleString('pt-BR')}
                       </span>
                     </div>
                     {/* Barra de progresso dos tokens */}
                     <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
                       <div 
-                        className={`h-full ${isOverLimit ? 'bg-red-500' : 'bg-emerald-500'}`} 
-                        style={{ width: `${Math.min((estimatedTokens / MAX_TOKENS) * 100, 100)}%` }}
+                        className={`h-full transition-all ${willTruncate ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${Math.min((estimatedCostTokens / MAX_TOKENS) * 100, 100)}%` }}
                       ></div>
                     </div>
                   </div>
 
-                  {isOverLimit && !forceBypass && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl">
-                      <p className="text-[10px] text-red-600 font-bold text-center leading-relaxed">
-                        ⚠️ Limite Excedido.<br/>
-                        A IA pode ter falhas de processamento em documentos tão grandes. 
+                  {willTruncate && (
+                    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                      <p className="text-[10px] text-amber-700 font-bold text-center leading-relaxed">
+                        ⚠️ Documento Longo (Limitação Ativa)<br/>
+                        A IA analisará as seções mais relevantes do documento devido ao limite de foco ({MAX_TOKENS} tokens).
                       </p>
                     </div>
                   )}
@@ -941,21 +1025,9 @@ const App: React.FC = () => {
                     credits > 0 ? (
                       <button 
                         onClick={handleStartAnalysisClick}
-                        className={`w-full font-black py-4 px-4 rounded-xl shadow-lg transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2 ${
-                          isOverLimit && !forceBypass
-                            ? 'bg-slate-300 text-slate-500 shadow-none border-2 border-dashed border-slate-400 hover:bg-slate-400 hover:text-white' 
-                            : isOverLimit && forceBypass
-                              ? 'bg-red-600 text-white shadow-red-100 animate-pulse ring-4 ring-red-500/30'
-                              : 'bg-red-600 hover:bg-red-700 text-white shadow-red-100'
-                        }`}
+                        className={`w-full font-black py-4 px-4 rounded-xl shadow-lg transition-all transform active:scale-[0.98] uppercase text-xs tracking-widest flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white shadow-red-100`}
                       >
-                        {isOverLimit && !forceBypass ? (
-                          <>⚠️ Excedido (Clique 2x p/ Forçar)</>
-                        ) : isOverLimit && forceBypass ? (
-                          <>⚠️ Confirmar Envio Forçado</>
-                        ) : (
-                          <><Play className="w-4 h-4 fill-current" /> Iniciar Verificação Técnica</>
-                        )}
+                        <Play className="w-4 h-4 fill-current" /> Iniciar Verificação Técnica
                       </button>
                     ) : (
                       <button 
