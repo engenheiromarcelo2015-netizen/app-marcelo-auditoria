@@ -8,47 +8,32 @@ export interface UserData {
 }
 
 /**
- * Valida o login e a senha consultando a tabela access_passwords no Supabase.
+ * Valida o login e a senha usando conexão segura e blindada.
  */
 export async function validateLogin(login: string, password: string): Promise<UserData | null> {
-  const { data, error } = await supabase
-    .from('access_passwords')
-    .select('id, login, email, credits')
-    .eq('login', login)
-    .eq('password', password)
-    .eq('active', true)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('secure_login', {
+    p_login: login,
+    p_password: password
+  });
 
-  if (error) {
-    console.error('[Supabase] Erro ao validar login/senha:', error.message);
+  if (error || !data) {
     return null;
   }
-
   return data;
 }
 
 /**
- * Registra um novo usuário com 1 crédito grátis.
+ * Registra um novo usuário.
  */
 export async function registerUser(login: string, password: string, email: string): Promise<UserData | null> {
-  const { data, error } = await supabase
-    .from('access_passwords')
-    .insert([{
-      login,
-      password,
-      email,
-      active: true,
-      credits: 1, // 1 crédito grátis na primeira análise
-    }])
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('secure_register', {
+    p_login: login,
+    p_password: password,
+    p_email: email
+  });
 
-  if (error) {
-    if (error.code === '23505') {
-      throw new Error('Este login ou e-mail já está em uso.');
-    }
-    console.error('[Supabase] Erro ao registrar usuário:', error.message);
-    return null;
+  if (error || !data) {
+    throw new Error('Este login ou e-mail já está em uso.');
   }
 
   return data;
@@ -58,42 +43,24 @@ export async function registerUser(login: string, password: string, email: strin
  * Verifica o saldo de créditos do usuário.
  */
 export async function checkAccessStatus(userId: string): Promise<{ credits: number }> {
-  const { data, error } = await supabase
-    .from('access_passwords')
-    .select('credits')
-    .eq('id', userId)
-    .single();
+  const { data, error } = await supabase.rpc('secure_check_credits', {
+    p_user_id: userId
+  });
 
-  if (error || !data) return { credits: 0 };
-  return { credits: data.credits ?? 0 };
+  if (error || data === null) return { credits: 0 };
+  return { credits: data };
 }
 
 /**
- * Consome 1 crédito do usuário ao iniciar uma análise.
- * Retorna true se bem-sucedido, false se sem créditos.
+ * Consome 1 crédito do usuário.
  */
 export async function consumeCredit(userId: string): Promise<boolean> {
-  const { data: user, error: fetchError } = await supabase
-    .from('access_passwords')
-    .select('credits')
-    .eq('id', userId)
-    .single();
+  const { data, error } = await supabase.rpc('secure_consume_credit', {
+    p_user_id: userId
+  });
 
-  if (fetchError || !user || user.credits <= 0) {
-    return false;
-  }
-
-  const { error } = await supabase
-    .from('access_passwords')
-    .update({ credits: user.credits - 1 })
-    .eq('id', userId);
-
-  if (error) {
-    console.error('[Supabase] Erro ao consumir crédito:', error.message);
-    return false;
-  }
-
-  return true;
+  if (error || data === null) return false;
+  return data;
 }
 
 /**
@@ -154,13 +121,11 @@ export async function updateHeartbeat(sessionToken: string): Promise<boolean> {
     return false;
   }
 
-  const { data: userData } = await supabase
-    .from('access_passwords')
-    .select('active')
-    .eq('id', data.user_id)
-    .single();
+  const { data: activeResult } = await supabase.rpc('secure_check_active', {
+    p_user_id: data.user_id
+  });
 
-  if (!userData || !userData.active) return false;
+  if (!activeResult) return false;
 
   return true;
 }

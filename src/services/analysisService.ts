@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 import { DocumentSummary, AnalysisResult } from '../types';
 import { AnalysisMode } from './geminiService';
+import { auditLog } from './auditLogService';
 
 export interface SavedAnalysis {
   id: string;
@@ -26,11 +27,14 @@ export async function saveAnalysis(
   analysisModes: AnalysisMode[],
   fileNames: string[]
 ): Promise<string | null> {
+  const userId = localStorage.getItem('user_id');
+
   try {
     // 1. Insere o registro principal da análise
     const { data: analysisData, error: analysisError } = await supabase
       .from('analyses')
       .insert({
+        user_id: userId || null,
         analysis_modes: analysisModes,
         overall_score: summary.overallScore,
         critical_issues: summary.criticalIssues,
@@ -71,6 +75,12 @@ export async function saveAnalysis(
         // Não retorna null aqui — a análise principal foi salva com sucesso
       }
     }
+    
+    await auditLog({
+      action: 'CREATE_ANALYSIS',
+      resource: `/analyses/${analysisId}`,
+      details: { analysisModes, fileNames }
+    });
 
     return analysisId;
   } catch (err) {
@@ -83,9 +93,17 @@ export async function saveAnalysis(
  * Retorna as análises mais recentes (sem achados detalhados).
  */
 export async function getRecentAnalyses(limit = 10): Promise<SavedAnalysis[]> {
+  const userId = localStorage.getItem('user_id');
+
+  if (!userId) {
+    await auditLog({ action: 'UNAUTHORIZED_ACCESS', resource: '/analyses' });
+    return [];
+  }
+
   const { data, error } = await supabase
     .from('analyses')
     .select('*')
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -93,6 +111,12 @@ export async function getRecentAnalyses(limit = 10): Promise<SavedAnalysis[]> {
     console.error('[Supabase] Erro ao buscar análises:', error.message);
     return [];
   }
+
+  await auditLog({
+    action: 'LIST_ANALYSES',
+    resource: '/analyses',
+    details: { count: data?.length || 0 }
+  });
 
   return data as SavedAnalysis[];
 }

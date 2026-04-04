@@ -6,155 +6,36 @@ export const analyzeDocuments = async (
   files: { name: string; text: string }[],
   modes: AnalysisMode[]
 ): Promise<DocumentSummary> => {
-  // Tenta pegar a chave de diferentes formas
-  const apiKey = import.meta.env.VITE_DEEPSEEK_API_KEY || 
-                 import.meta.env.DEEPSEEK_API_KEY;
-  
-  if (!apiKey) {
-    console.error("Chave não encontrada. Variáveis disponíveis:", {
-      VITE_DEEPSEEK_API_KEY: import.meta.env.VITE_DEEPSEEK_API_KEY ? "presente" : "ausente",
-      DEEPSEEK_API_KEY: import.meta.env.DEEPSEEK_API_KEY ? "presente" : "ausente"
-    });
-    throw new Error("Chave DeepSeek não encontrada. Configure DEEPSEEK_API_KEY no .env.local");
-  }
-
-  const focusDescriptions = modes.map(mode => {
-    if (mode === 'IATF') return "IATF 16949 (Qualidade Automotiva)";
-    if (mode === 'ISO 14001') return "ISO 14001 (Gestão Ambiental)";
-    if (mode === 'ISO 9001 + E1') return "ISO 9001 + E1 (Qualidade)";
-    return mode;
-  }).join(", ");
-
-  // Texto já extraído corretamente no upload (pdfjs-dist + OCR fallback)
-  const combinedText = files.map(f => {
-    const textoLimitado = f.text.length > 8000 ? f.text.substring(0, 8000) + "..." : f.text;
-    return `DOCUMENTO: ${f.name}\nCONTEÚDO:\n${textoLimitado}`;
-  }).join("\n\n---\n\n");
-
-  const promptText = `
-    Você é um Auditor Especialista da Soluções Empreendedoras.
-    Analise os documentos abaixo com foco nos critérios: ${focusDescriptions}.
-
-    Sua resposta deve ser estritamente em JSON seguindo o esquema fornecido.
-    A pontuação (overallScore) deve ser rigorosa (0-100).
-
-    Responda APENAS com JSON, sem texto adicional.
-
-    Formato JSON esperado:
-    {
-      "overallScore": number,
-      "criticalIssues": number,
-      "majorIssues": number,
-      "minorIssues": number,
-      "findings": [
-        {
-          "standard": string,
-          "clause": string,
-          "finding": string,
-          "severity": "CRITICAL" | "MAJOR" | "MINOR" | "OBSERVATION",
-          "recommendation": string
-        }
-      ],
-      "complianceProgress": {
-        "iatf": number,
-        "iso14001": number,
-        "iso9001": number
-      }
-    }
-
-    DOCUMENTOS PARA ANÁLISE:
-    ${combinedText}
-  `;
-
   try {
-    console.log("Enviando requisição para DeepSeek API...");
+    console.log("Enviando requisição segura para o backend...");
     
-    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    // Process text locally before sending the payload
+    const processedFiles = files.map(f => {
+      // Small limit string so it doesn't break Vercel edge function limits
+      const textoLimitado = f.text.length > 8000 ? f.text.substring(0, 8000) + "..." : f.text;
+      return {
+        name: f.name,
+        text: textoLimitado
+      };
+    });
+
+    const response = await fetch("/api/analyze", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: "Você é um auditor especialista em qualidade e normas técnicas. Responda sempre em JSON válido."
-          },
-          {
-            role: "user",
-            content: promptText
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 4096,
-        response_format: { type: "json_object" }
-      })
+      body: JSON.stringify({ files: processedFiles, modes })
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("Erro DeepSeek:", errorData);
-      
-      if (response.status === 401) {
-        throw new Error("Chave da API inválida. Verifique sua chave do DeepSeek.");
-      } else if (response.status === 429) {
-        throw new Error("Limite de requisições excedido. Aguarde e tente novamente.");
-      } else if (response.status === 402) {
-        throw new Error("Saldo insuficiente. Verifique seus créditos no DeepSeek.");
-      } else {
-        throw new Error(`Erro ${response.status}: ${errorData.error?.message || 'Erro desconhecido'}`);
-      }
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || `Erro HTTP no servidor: ${response.status}`);
     }
 
-    const data = await response.json();
-    const resultText = data.choices[0]?.message?.content;
-    
-    if (!resultText) {
-      throw new Error("Resposta vazia da IA");
-    }
-
-    console.log("Resposta recebida, processando...");
-    
-    // Limpa possíveis marcações e extrai JSON
-    let cleanText = resultText.trim();
-    cleanText = cleanText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-    
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      cleanText = jsonMatch[0];
-    }
-    
-    const result = JSON.parse(cleanText);
-    
-    return {
-      overallScore: typeof result.overallScore === 'number' ? result.overallScore : 0,
-      criticalIssues: typeof result.criticalIssues === 'number' ? result.criticalIssues : 0,
-      majorIssues: typeof result.majorIssues === 'number' ? result.majorIssues : 0,
-      minorIssues: typeof result.minorIssues === 'number' ? result.minorIssues : 0,
-      findings: Array.isArray(result.findings) ? result.findings : [],
-      complianceProgress: {
-        iatf: typeof result.complianceProgress?.iatf === 'number' ? result.complianceProgress.iatf : 0,
-        iso14001: typeof result.complianceProgress?.iso14001 === 'number' ? result.complianceProgress.iso14001 : 0,
-        iso9001: typeof result.complianceProgress?.iso9001 === 'number' ? result.complianceProgress.iso9001 : 0
-      }
-    };
-
+    const result = await response.json();
+    return result as DocumentSummary;
   } catch (apiError: any) {
-    console.error("Erro na API DeepSeek:", apiError);
-    
-    let mensagemErro = "Falha na IA: ";
-    if (apiError.message.includes("429")) {
-      mensagemErro += "Muitas requisições. Aguarde 30 segundos e tente novamente.";
-    } else if (apiError.message.includes("401")) {
-      mensagemErro += "Chave da API inválida. Verifique sua chave do DeepSeek.";
-    } else if (apiError.message.includes("402")) {
-      mensagemErro += "Créditos insuficientes. Recarregue sua conta no DeepSeek.";
-    } else {
-      mensagemErro += apiError.message;
-    }
-    
-    throw new Error(mensagemErro);
+    console.error("Erro na Análise (via backend):", apiError);
+    throw new Error(apiError.message || "Erro desconhecido ao comunicar com o servidor.");
   }
-};
+};

@@ -9,7 +9,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <div className="max-w-7xl mx-auto flex flex-col items-center text-center">
 
           <div className="space-y-0">
-            <h1 className="font-black text-xl tracking-tighter text-white drop-shadow-md leading-none">App Marcelo Dias</h1>
+            <h1 className="font-black text-xl tracking-tighter text-white drop-shadow-md leading-none">App Auditoria</h1>
             <p className="text-[8px] text-red-500 font-black uppercase tracking-[0.4em] mt-1 leading-none">Soluções Empreendedoras</p>
           </div>
         </div>
@@ -26,7 +26,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
             Plataforma Exclusiva de Gestão da Qualidade & Auditoria
           </p>
           <p className="text-slate-600 text-sm font-semibold">
-            &copy; {new Date().getFullYear()} Soluções Empreendedoras | App Marcelo Dias CNPJ: 23.067.526/0001-94
+            &copy; {new Date().getFullYear()} Soluções Empreendedoras | App Auditoria
           </p>
         </div>
       </footer>

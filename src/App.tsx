@@ -197,6 +197,42 @@ export function truncateByTokens(text: string, maxTokens: number): string {
 
 // Senhas gerenciadas no Supabase (tabela access_passwords)
 
+const LoadingOverlay = ({ isLoading, message = "Processando..." }: { isLoading: boolean; message?: string }) => {
+  const [showTimeout, setShowTimeout] = React.useState(false);
+  
+  React.useEffect(() => {
+    if (isLoading) {
+      const timer = setTimeout(() => {
+        setShowTimeout(true);
+        console.warn('Loading excedeu o tempo limite e pode estar travado.');
+      }, 10000);
+      
+      return () => clearTimeout(timer);
+    } else {
+      setShowTimeout(false);
+    }
+  }, [isLoading]);
+  
+  if (!isLoading) return null;
+  
+  return (
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4">
+      <div className="h-12 w-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin mb-4" />
+      <p className="text-white text-center font-bold text-lg mb-2">
+        {showTimeout ? 'A conexão está demorando mais que o esperado...' : message}
+      </p>
+      {showTimeout && (
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-4 px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-all shadow-xl"
+        >
+          Recarregar Página
+        </button>
+      )}
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   // ── Auth ──
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -229,6 +265,31 @@ const App: React.FC = () => {
   const [sessionToken, setSessionToken] = useState<string | null>(localStorage.getItem('session_token'));
   const [forceBypass, setForceBypass] = useState(false);
 
+  // Controle de montagem para evitar setState em componente desmontado
+  const isMounted = React.useRef(true);
+
+  React.useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Failsafe: Reset forçado se loading travar por mais de 30 segundos
+  React.useEffect(() => {
+    if (loginLoading) {
+      const timer = setTimeout(() => {
+        console.warn('Forçando reset do loading state após 30s');
+        if (isMounted.current) {
+          setLoginLoading(false);
+          setLoginError('Tempo limite excedido. Tente novamente.');
+        }
+      }, 30000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [loginLoading]);
+
   // ── Constantes e Derivados ──
   const MAX_TOKENS = 3500;
   const estimatedCostTokens = Math.ceil(files.reduce((acc, file) => acc + (file.text.length / 4), 0));
@@ -236,6 +297,10 @@ const App: React.FC = () => {
 
   // ── Session Heartbeat & Recovery ──
   React.useEffect(() => {
+    // Reset preventivo para garantir que a UI nunca inicie travada (Loading infinito)
+    setLoginLoading(false);
+    setLoading(false);
+
     const recoveredToken = localStorage.getItem('session_token');
     const recoveredUserId = localStorage.getItem('user_id');
 
@@ -269,44 +334,92 @@ const App: React.FC = () => {
       }
     }, 60000);
 
-    return () => clearInterval(interval);
+    // Adicionar listener de erro global do Supabase
+    const handleAuthError = (e: Event) => {
+      const error = (e as CustomEvent).detail;
+      console.error('Auth error detected:', error);
+      if (error?.message?.includes('session')) {
+        handleLogout();
+        setLoginError('Sessão expirada. Faça login novamente.');
+      }
+    };
+    
+    window.addEventListener('supabase-auth-error', handleAuthError);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('supabase-auth-error', handleAuthError);
+    };
   }, [isAuthenticated]);
 
   const handleLogout = async () => {
-    const currentToken = sessionToken || localStorage.getItem('session_token');
-    if (currentToken) {
-      await clearSession(currentToken);
+    if (!isMounted.current) return;
+    setLoginLoading(true);
+    try {
+      const currentToken = sessionToken || localStorage.getItem('session_token');
+      if (currentToken) {
+        // Timeout de segurança no logout
+        await Promise.race([
+          clearSession(currentToken),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout no logout')), 5000))
+        ]);
+      }
+    } catch (e) {
+      console.error('Erro no logout seguro:', e);
+    } finally {
+      if (isMounted.current) {
+        setIsAuthenticated(false);
+        setCredits(0);
+        setSessionToken(null);
+        setCurrentUser(null);
+        setAuthView('login');
+        setFiles([]);
+        setSummary(null);
+        setLoginLoading(false);
+        setLoading(false);
+      }
     }
-    setIsAuthenticated(false);
-    setCredits(0);
-    setSessionToken(null);
-    setCurrentUser(null);
-    setAuthView('login');
-    setFiles([]);
-    setSummary(null);
   };
 
   const performLogin = async (username: string, password: string) => {
+    if (!isMounted.current) return false;
     setLoginLoading(true);
     setLoginError(null);
-    const userData = await validateLogin(username.trim(), password.trim());
-    
-    if (userData) {
-      const token = await registerSession(userData.id, navigator.userAgent);
-      if (token) {
-        setSessionToken(token);
-        setCurrentUser(userData);
-        const { credits: c } = await checkAccessStatus(userData.id);
-        setCredits(c);
-        setIsAuthenticated(true);
-        return true;
-      } else {
-        setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
+    try {
+      const userData = await Promise.race([
+        validateLogin(username.trim(), password.trim()),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout na validação de login')), 10000))
+      ]) as UserData | null;
+      
+      if (userData && isMounted.current) {
+        const token = await Promise.race([
+          registerSession(userData.id, navigator.userAgent),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao registrar sessão')), 10000))
+        ]) as string | null;
+
+        if (token && isMounted.current) {
+          setSessionToken(token);
+          setCurrentUser(userData);
+          const { credits: c } = await checkAccessStatus(userData.id);
+          setCredits(c);
+          setIsAuthenticated(true);
+          return true;
+        } else if (isMounted.current) {
+          setLoginError('Usuário já logado em outro dispositivo. Aguarde 5 minutos ou deslogue da outra sessão.');
+        }
+      } else if (isMounted.current) {
+        setLoginError('Senha inválida. Verifique e tente novamente.');
       }
-    } else {
-      setLoginError('Senha inválida. Verifique e tente novamente.');
+    } catch (error: any) {
+      if (!isMounted.current) return false;
+      console.error('Falha no login:', error);
+      setLoginError(error.message || 'Erro de conexão. Tente novamente.');
+    } finally {
+      // GARANTE a limpeza do estado de loading
+      if (isMounted.current) {
+        setLoginLoading(false);
+      }
     }
-    setLoginLoading(false);
     return false;
   };
 
@@ -319,18 +432,44 @@ const App: React.FC = () => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!regUsername.trim() || !regPassword.trim() || !regEmail.trim()) return;
+    if (!isMounted.current) return;
+    
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const userData = await registerUser(regUsername.trim(), regPassword.trim(), regEmail.trim());
-      if (userData) {
-        // Após registro, faz login automático
-        await performLogin(regUsername, regPassword);
+      const userData = await Promise.race([
+        registerUser(regUsername.trim(), regPassword.trim(), regEmail.trim()),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao registrar usuário')), 10000))
+      ]) as UserData | null;
+
+      if (userData && isMounted.current) {
+        // NÃO chama performLogin - faz o login diretamente para evitar conflito de estado
+        const token = await Promise.race([
+          registerSession(userData.id, navigator.userAgent),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ao registrar sessão depois do cadastro')), 10000))
+        ]) as string | null;
+
+        if (token && isMounted.current) {
+          setSessionToken(token);
+          setCurrentUser(userData);
+          const { credits: c } = await checkAccessStatus(userData.id);
+          setCredits(c);
+          setIsAuthenticated(true);
+        } else if (isMounted.current) {
+          setLoginError('Usuário criado, mas já logado em outro dispositivo.');
+        }
+      } else if (isMounted.current) {
+        setLoginError('Erro ao criar usuário. Tente novamente.');
       }
     } catch (err: any) {
+      if (!isMounted.current) return;
+      console.error('Falha no cadastro:', err);
       setLoginError(err.message || 'Erro ao realizar cadastro.');
     } finally {
-      setLoginLoading(false);
+      // GARANTE limpeza do loading no finally
+      if (isMounted.current) {
+        setLoginLoading(false);
+      }
     }
   };
 
@@ -353,13 +492,14 @@ const App: React.FC = () => {
   if (!isAuthenticated || authView === 'buy') {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <LoadingOverlay isLoading={loginLoading} message="Autenticando de forma segura..." />
         <div className="w-full max-w-sm">
           {/* Logo */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 bg-red-600 rounded-2xl shadow-2xl mb-4">
               <Lock className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-2xl font-black text-white tracking-tight">App Marcelo Dias</h1>
+            <h1 className="text-2xl font-black text-white tracking-tight">App Auditoria</h1>
             <p className="text-red-500 text-xs font-black uppercase tracking-[0.3em] mt-1">Soluções Empreendedoras</p>
           </div>
 
@@ -598,7 +738,7 @@ const App: React.FC = () => {
           )}
 
           <p className="text-center text-slate-600 text-[10px] mt-6 uppercase tracking-widest">
-            CNPJ: 23.067.526/0001-94
+            App Auditoria
           </p>
         </div>
       </div>
@@ -760,7 +900,7 @@ const App: React.FC = () => {
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
-      doc.text('APP Marcelo - Auditoria', 105, 8, { align: 'center' });
+      doc.text('App Auditoria', 105, 8, { align: 'center' });
       
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
@@ -876,7 +1016,7 @@ const App: React.FC = () => {
         doc.text('AVISO LEGAL:', 14, finalY);
         doc.setFont('helvetica', 'normal');
         const disclaimer = [
-          "A Soluções Empreendedoras desenvolveu o App Marcelo Dias para apoiar equipes de gestão. A empresa se exime de",
+          "A Soluções Empreendedoras desenvolveu o App Auditoria para apoiar equipes de gestão. A empresa se exime de",
           "qualquer responsabilidade quanto à utilização das informações disponibilizadas. A correta aplicação e interpretação",
           "dos dados são de responsabilidade exclusiva do usuário. Recomenda-se consulta a especialistas qualificados."
         ];
@@ -889,7 +1029,7 @@ const App: React.FC = () => {
         doc.setPage(i);
         doc.setFontSize(7);
         doc.setTextColor(150);
-        doc.text(`Página ${i} de ${pageCount} | App Marcelo Dias | CNPJ: 23.067.526/0001-94`, 105, 285, { align: 'center' });
+        doc.text(`Página ${i} de ${pageCount} | App Auditoria`, 105, 285, { align: 'center' });
         doc.text('Relatório gerado por Inteligência Artificial - Uso Consultivo.', 105, 290, { align: 'center' });
       }
 
@@ -969,7 +1109,7 @@ const App: React.FC = () => {
                     <FileText className="w-6 h-6 text-slate-400 group-hover:text-red-600" />
                   </div>
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    Coloque aqui seus documentos para análise do App Marcelo Dias:
+                    Coloque aqui seus documentos para análise do App Auditoria:
                   </p>
                 </div>
               </div>
@@ -1135,7 +1275,7 @@ const App: React.FC = () => {
               <div className="max-w-sm">
                 <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Simples Fácil e Rápido.</h3>
                 <p className="text-slate-500 mt-4 text-sm leading-relaxed font-medium">
-                  Bem-vindo ao <span className="text-red-600 font-bold">App Marcelo Dias</span>. Selecione o escopo da análise, faça o upload dos seus documentos e deixe nossa IA validar sua conformidade técnica em tempo real.
+                  Bem-vindo ao <span className="text-red-600 font-bold">App Auditoria</span>. Selecione o escopo da análise, faça o upload dos seus documentos e deixe nossa IA validar sua conformidade técnica em tempo real.
                 </p>
                 <p className="text-slate-400 mt-6 text-[11px] leading-relaxed border-t border-slate-100 pt-6 italic">
                   As análises possuem limite de processamento em tokens, informado no momento do upload. Cada análise corresponde ao consumo de 1 crédito. O usuário é responsável por verificar essas informações antes de confirmar o envio. Caso o arquivo ultrapasse o limite estabelecido, recomenda-se reduzir o conteúdo (por exemplo, diminuir o número de páginas) até que esteja dentro do limite permitido.
@@ -1172,9 +1312,9 @@ const App: React.FC = () => {
                   <div>
                     <h4 className="font-black text-red-900 uppercase tracking-widest text-[10px] mb-1">Nota Estratégica</h4>
                     <p className="text-slate-700 leading-relaxed text-sm font-medium whitespace-pre-line">
-                      A Soluções Empreendedoras desenvolveu o App Marcelo Dias com o objetivo de contribuir e apoiar a equipe do Sistema de Gestão da Qualidade, APQP e demais atividades correlatas.
+                      A Soluções Empreendedoras desenvolveu o App Auditoria com o objetivo de contribuir e apoiar a equipe do Sistema de Gestão da Qualidade, APQP e demais atividades correlatas.
                       {"\n\n"}
-                      A empresa se exime de qualquer responsabilidade quanto à utilização das informações disponibilizadas no aplicativo, sendo de responsabilidade exclusiva do usuário a correta aplicação, análise e interpretação dos dados contidos no App Marcelo Dias.
+                      A empresa se exime de qualquer responsabilidade quanto à utilização das informações disponibilizadas no aplicativo, sendo de responsabilidade exclusiva do usuário a correta aplicação, análise e interpretação dos dados contidos no App Auditoria.
                       {"\n\n"}
                       Em caso de dúvidas, recomenda-se a consulta a especialistas ou profissionais qualificados da área.
                     </p>

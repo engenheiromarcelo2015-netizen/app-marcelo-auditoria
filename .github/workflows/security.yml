@@ -1,0 +1,55 @@
+name: Security Pipeline (SAST)
+
+on:
+  push:
+    branches: [main, develop, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 0 * * 0'  # Semanal aos domingos
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Node.js security scan
+      - name: Audit dependencies
+        run: |
+          npm audit --json > npm-audit.json || true
+          npm audit --production || true
+
+      # Semgrep (OWASP Top 10)
+      - name: Semgrep Scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: |
+            p/owasp-top-ten
+            p/nodejs
+            p/javascript
+            p/typescript
+
+      # Secret scanning
+      - name: TruffleHog Secrets Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: ${{ github.sha }}
+
+      # Upload resultados no Artifacts do GitHub Actions
+      - name: Upload SAST Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-results
+          path: |
+            npm-audit.json
