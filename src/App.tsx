@@ -2,6 +2,8 @@
 import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Layout } from './components/Layout';
 import { FindingsTable } from './components/FindingsTable';
 import { DocumentSummary } from './types';
@@ -883,13 +885,7 @@ const App: React.FC = () => {
     if (!summary) return;
 
     try {
-      const jspdfLib = (window as any).jspdf;
-      if (!jspdfLib || !jspdfLib.jsPDF) {
-        alert("A biblioteca de PDF ainda está carregando. Por favor, aguarde um momento e tente novamente.");
-        return;
-      }
-
-      const doc = new jspdfLib.jsPDF();
+      const doc = new jsPDF();
       const dateStr = new Date().toLocaleDateString('pt-BR');
       const timeStr = new Date().toLocaleTimeString('pt-BR');
 
@@ -962,7 +958,7 @@ const App: React.FC = () => {
       doc.text(`• Menores: ${summary.minorIssues}`, 120, 46);
 
       // Tabela de Achados
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: 50,
         head: [['Gravidade', 'Norma / Cláusula', 'Descrição do Achado', 'Recomendação Técnica']],
         body: summary.findings.map(f => [
